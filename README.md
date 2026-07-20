@@ -8,10 +8,10 @@ completion second, coverage third. The agent is stateless; the entire
 course lives in one human-readable markdown directory you can read, edit,
 git-push, and resurrect on any machine, any platform, any model.
 
-**Status: design + deterministic core.** The spec has survived two
-adversarial five-reviewer critique panels; the scheduling engine is
-implemented and tested. The skill wrapper (SKILL.md / bootstrap flow) and
-pilot course are next.
+**Status: complete and runnable, not yet piloted.** The spec survived two
+adversarial five-reviewer critique panels; the scheduling engine, the
+skill procedures, the file templates, and a bundled example course are
+all implemented and verified. Next: run a real course end to end.
 
 ## How it works
 
@@ -38,15 +38,25 @@ pilot course are next.
 
 | File | What it is |
 |---|---|
-| [`SPEC.md`](SPEC.md) | The consolidated design spec (v2.1) |
-| [`CRITIQUE.md`](CRITIQUE.md) | Round-1 findings: 5-reviewer adversarial panel |
-| [`CRITIQUE-R2.md`](CRITIQUE-R2.md) | Round-2 findings: same panel vs the fixes |
+| [`SKILL.md`](SKILL.md) | The session procedure — dispatch, flow, close |
+| [`bootstrap.md`](bootstrap.md) | Course creation: interview → design → assets |
+| [`checkpoint.md`](checkpoint.md) | Checkpoints, adjudication, pause, graduation |
 | [`scripts/schedule.py`](scripts/schedule.py) | The deterministic core (stdlib only) |
+| [`templates/`](templates) | Every state file, self-documenting |
+| [`example-course/`](example-course) | A complete 9-session course, mid-flight |
 | [`tests/test_schedule.py`](tests/test_schedule.py) | Written first; pins every interface |
+| [`SPEC.md`](SPEC.md) | The design spec (v2.1) |
+| [`CRITIQUE.md`](CRITIQUE.md) · [`CRITIQUE-R2.md`](CRITIQUE-R2.md) | Two adversarial panel rounds, in full |
 
 ```
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v          # 55 tests
+python3 scripts/schedule.py --course example-course check
 ```
+
+The three procedure files are split by **progressive disclosure**: a
+session loads `SKILL.md` (~1k words) and nothing else, until dispatch
+sends it to `checkpoint.md`. Bootstrap is a separate skill because it is
+the only part that needs research tools.
 
 ## Design lineage
 

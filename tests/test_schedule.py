@@ -114,6 +114,10 @@ class CourseCase(unittest.TestCase):
         os.environ["ELENCHUS_TODAY"] = TODAY
         self.addCleanup(os.environ.pop, "ELENCHUS_TODAY", None)
         (self.dir / "log").mkdir()
+        (self.dir / "assets").mkdir()
+        # a clean course has assets for its started unit (GOOD_ASSETS is
+        # module-level; resolved at call time, so definition order is fine)
+        (self.dir / "assets" / "unit-01.md").write_text(GOOD_ASSETS)
         self.write("domain-map.md", MAP_MD)
         self.write("plan.md", PLAN_MD)
         self.write_state([
@@ -172,6 +176,13 @@ class TestStateParsing(CourseCase):
         text = schedule.serialize_state(meta, recs)
         _, recs2 = schedule.parse_state(text)
         self.assertNotIn("|", recs2["alpha"]["note"])
+
+    def test_body_comments_are_tolerated(self):
+        # state files carry their own format documentation
+        self.write("knowledge-state.md",
+                   STATE_HEADER + "<!-- FORMAT: see templates -->\n"
+                   + rec_line("alpha") + "\n")
+        self.assertIn("alpha", self.state()[1])
 
     def test_unknown_label_rejected(self):
         self.write_state([rec_line("alpha") + " | bogus: x"])
@@ -488,6 +499,93 @@ class TestCheck(CourseCase):
     def test_dropped_is_allowed_asymmetry(self):
         schedule.cmd_reprune(self.dir, drop=["beta"])
         schedule.cmd_check(self.dir)  # dropped-in-state, absent-in-plan: OK
+
+
+# ----------------------------------------------------------------- assets
+
+GOOD_ASSETS = """\
+<!-- elenchus:assets unit: 01 -->
+
+## concept: alpha
+- quiz: What is alpha? | a: the first concept | distractor: M1
+- example: worked | here is alpha worked through
+- example: faded | now you finish the last step
+- self-explain: Why does that follow?
+
+## concept: beta
+- quiz: What is beta? | a: the second concept
+- example: worked | beta, worked
+
+## rubric: alpha
+- claim: alpha precedes beta
+- avoid: M1
+
+## interleaved
+- problem: which applies here? | concepts: alpha, beta
+- problem: and here? | concepts: beta
+- problem: and this one? | concepts: alpha
+"""
+
+
+class TestAssets(CourseCase):
+
+    def put(self, text, name="unit-01.md"):
+        (self.dir / "assets" / name).write_text(text)
+
+    def test_good_assets_parse_and_pass(self):
+        a = schedule.parse_assets(GOOD_ASSETS)
+        self.assertEqual(a["concepts"]["alpha"]["quiz"][0]["a"],
+                         "the first concept")
+        self.assertEqual(a["rubrics"]["alpha"]["avoid"], ["M1"])
+        self.assertEqual(len(a["interleaved"]), 3)
+        schedule.cmd_check(self.dir)
+
+    def test_started_unit_without_assets_fails(self):
+        (self.dir / "assets" / "unit-01.md").unlink()  # unit 1 in-progress
+        with self.assertRaises(schedule.IntegrityError):
+            schedule.cmd_check(self.dir)
+
+    def test_placeholder_assets_are_rejected(self):
+        # the lazy-executor failure: quiz keys present, rubric absent
+        self.put(GOOD_ASSETS.split("## rubric")[0]
+                 + "## interleaved\n- problem: x | concepts: alpha\n")
+        with self.assertRaises(schedule.IntegrityError) as cm:
+            schedule.cmd_check(self.dir)
+        self.assertIn("rubric", str(cm.exception))
+
+    def test_quiz_without_answer_key_is_loud(self):
+        with self.assertRaises(schedule.FormatError):
+            schedule.parse_assets("## concept: alpha\n- quiz: no key here\n")
+
+    def test_invented_distractor_rejected(self):
+        self.put(GOOD_ASSETS.replace("distractor: M1", "distractor: M9"))
+        with self.assertRaises(schedule.IntegrityError) as cm:
+            schedule.cmd_check(self.dir)
+        self.assertIn("M9", str(cm.exception))
+
+    def test_too_few_interleaved_rejected(self):
+        self.put(GOOD_ASSETS.replace(
+            "- problem: and this one? | concepts: alpha\n", ""))
+        with self.assertRaises(schedule.IntegrityError) as cm:
+            schedule.cmd_check(self.dir)
+        self.assertIn("interleaved", str(cm.exception))
+
+    def test_use_concept_needs_apply_prompt(self):
+        # unit 2 holds gamma (verify: use); give it a quiz-only block
+        (self.dir / "assets" / "unit-02.md").write_text(
+            "## concept: gamma\n- quiz: q | a: a\n"
+            "## rubric: gamma\n- claim: c\n- avoid: M1\n"
+            "## interleaved\n- problem: a | concepts: gamma\n"
+            "- problem: b | concepts: gamma\n"
+            "- problem: c | concepts: gamma\n")
+        self.put(GOOD_ASSETS)
+        with self.assertRaises(schedule.IntegrityError) as cm:
+            schedule.cmd_check(self.dir)
+        self.assertIn("apply", str(cm.exception))
+
+    def test_misconceptions_parsed_from_map(self):
+        self.assertEqual(
+            schedule.parse_map(self.dir)["alpha"]["misconceptions"], ["M1"])
 
 
 # ----------------------------------------------------------------- report
