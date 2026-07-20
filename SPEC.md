@@ -1,12 +1,18 @@
-# Tutor — Consolidated Spec (v2)
+# Tutor — Consolidated Spec (v2.1)
 
 A chat-based AI tutoring skill that teaches a single user one topic across a
 finite, scheduled course of short sessions. All state lives in one
 human-readable directory. Exportable: any user, any agent platform, any model.
 
+v2.1 incorporates the five-reviewer critique round (see CRITIQUE.md):
+the concept state machine moved into the script, batch-atomic grading,
+retention-horizon scheduling, feedback-first pedagogy, rubric-based
+teach-back, a course lifecycle, and a simplification pass.
+
 Design goals, in priority order:
 
-1. **Retention** — the user remembers, long-term.
+1. **Retention** — the user remembers, long-term (past the course, not to
+   its end).
 2. **Adherence** — the user keeps showing up and finishes.
 3. **Simplicity / exportability** — a stranger's agent runs it faithfully.
 4. **Coverage** — of the pruned, goal-relevant slice of the domain.
@@ -15,42 +21,40 @@ Design goals, in priority order:
 
 ## 1. Design principles
 
-These are the load-bearing decisions. Everything in later sections is an
-application of one of these.
-
 1. **Structure over prose.** A skill is executed by an arbitrary LLM under
-   context pressure, not enforced by a developer. Any rule that matters is
-   embedded in file formats, scripts, or state-driven dispatch — never in
-   exhortations the agent must remember. Scheduling is a script. Grading is
-   comparison against stored keys. Session type is derived from state.
-2. **Forward motion is unconditional; verification is advisory.** The course
-   advances session by session on rails. Mastery scores are scheduling
-   inputs (what gets reviewed), never gates. Weak concepts persist in the
-   review queue until evidenced — they never stall the plan.
-3. **Map fixed, plan mutable, session ephemeral.** A one-time curriculum
-   design pass produces a stable concept graph (the map). A living plan is
-   derived from it. Sessions are generated at runtime from plan + state +
-   pre-authored assets.
-4. **Sessions are the currency.** Course size, progress, and the shot clock
-   are measured in sessions (numbered 1..N), not dates. Only *review
-   scheduling* is calendar-based, because forgetting runs on wall-clock.
-   Missing days costs calendar time, never progress.
-5. **Compression = pruning.** A 10-session course is not a 30-session course
-   summarized; it is a smaller concept list, chosen by backward design from
-   the terminal task. Session budget determines concept budget.
-6. **Design time is cheap, runtime is fragile.** Everything that can be
-   authored at bootstrap — grading keys, worked examples, misconception
-   distractors, source notes, sequencing — is authored at bootstrap.
-   Runtime adapts curated assets; it never improvises them from nothing.
-7. **User-minutes are the scarce resource.** Onboarding is ~5 taps. The
-   agent spends its own tokens lavishly and the user's time stingily.
-   Cheap onboarding is safe because the plan is mutable and checkpoint
-   reviews are the correction loop.
-8. **The resurrection test.** A fresh agent, any model, any platform, handed
-   only the course directory, must correctly run the next session with zero
-   explanation. This single property delivers disaster recovery, platform
-   portability, and skill exportability. No state exists outside the
-   directory.
+   context pressure. Any rule that matters is embedded in file formats,
+   scripts, or state-driven dispatch — never in exhortations. Scheduling,
+   mastery transitions, and status changes live in a script. Grading is
+   comparison against stored keys and rubrics. Session type is derived
+   from state via an explicit priority ladder.
+2. **Forward motion is unconditional; verification is advisory.** The
+   course advances session by session. Mastery is a scheduling input,
+   never a gate. Weak concepts persist in the (capped) review queue.
+3. **Map fixed, plan mutable, session ephemeral.** A one-time design pass
+   produces a stable concept graph. A living plan derives from it.
+   Sessions are generated from plan + state + pre-authored assets.
+4. **Sessions are the currency.** Course size, progress, and the shot
+   clock are counted in sessions. Only review scheduling is
+   calendar-based. Missing days costs calendar time, never progress.
+5. **Compression = pruning** — at bootstrap *and mid-course*. A shorter
+   course is a smaller concept list chosen by backward design, never the
+   same content covered faster.
+6. **Design time is cheap, runtime is fragile.** Grading keys, rubrics,
+   worked examples, misconception distractors, interleaved problem sets,
+   and source notes are authored at bootstrap or at structurally-gated
+   unit boundaries. Runtime adapts curated assets; it never improvises
+   evidence standards.
+7. **User-minutes are the scarce resource.** Onboarding is ~5 taps; the
+   agent spends tokens lavishly and user-time stingily. Cheap onboarding
+   is safe because the plan is mutable and checkpoints are the
+   correction loop.
+8. **Showing up must feel like learning, not being audited.** Every
+   session opens with a payoff before any testing; every retrieval ends
+   with corrective feedback; failure steps back, never to zero; stalls
+   get a dignified renegotiation, never a guilt pile.
+9. **The resurrection test.** A fresh agent, any model, any platform,
+   handed only the course directory, must correctly run the next session
+   with zero explanation. No state exists outside the directory.
 
 ---
 
@@ -58,20 +62,22 @@ application of one of these.
 
 Two skills, one directory, one script.
 
-- **`bootstrap`** — run once per course. Interviews (briefly), researches
-  (if needed), designs the curriculum, authors assets, writes the course
-  directory, sets up the schedule. Needs web/research tools.
-- **`session`** — runs every scheduled session. Reads state, dispatches to
-  the right session type, teaches, updates state, commits. Needs no tools
-  beyond file I/O and the bundled script.
-- **`scripts/schedule.py`** — stdlib-only Python, copied *into* the course
-  directory at bootstrap (self-containment for resurrection). Owns all date
-  arithmetic and graph validation. The agent never computes dates.
+- **`bootstrap`** — run once per course. Brief interview, research (if
+  needed), curriculum design, asset authoring, directory creation,
+  schedule setup. The only place with web/research tools.
+- **`session`** — runs every scheduled session. Tool-free beyond file
+  I/O and the bundled script — true in every mode, always. All external
+  ingestion happens at bootstrap.
+- **`scripts/schedule.py`** — stdlib-only Python (≥3.9), copied into the
+  course directory at bootstrap. Owns all date arithmetic, mastery
+  transitions, status changes, queue generation, and integrity checks.
+  The agent never computes dates and never decides mastery moves.
 
-Cut from v1: the `spar` skill (an example prompt in docs, not a skill), the
-four-way verification-class taxonomy, per-modality attempt budgets,
-standalone teach-back and weekly-review skills (now session *modes*),
-embeddings/vector retrieval of any kind.
+Cut from v1/v2: spar; four-way verification classes; per-modality attempt
+budgets; standalone teach-back/weekly-review skills; embeddings; the 0–5
+mastery scale; depth-leveled concept splits; per-unit source refresh
+(bootstrap-only ingestion in v1 — a refresh mode is a v2 extension
+hook); turn-count self-tracking.
 
 ---
 
@@ -79,369 +85,455 @@ embeddings/vector retrieval of any kind.
 
 ```
 course/
-  README.md            # self-describing: what this is + how any agent resumes
-  domain-map.md        # concept graph; frozen except append-only errata
-  plan.md              # units, statuses, session counter
+  README.md            # pointer + course facts + resurrection preconditions
+  SKILL.md             # copy of the session skill, made at bootstrap
+  domain-map.md        # concept graph; frozen ids, machine-form errata
+  plan.md              # units, statuses, counters, lifecycle fields
   knowledge-state.md   # one line per concept (the irreplaceable file)
   review-queue.md      # GENERATED by schedule.py — never hand-edited
   history.md           # rolling digest of old session logs
-  log/                 # last ~10 session logs; older ones distilled
+  log/                 # recent session logs; older ones distilled
   assets/unit-NN.md    # pre-authored teaching assets per unit
-  sources/             # distilled source notes + index.md
+  sources/             # distilled source notes + index.md (bootstrap-time)
   artifact/            # optional; the user's work product
-  scripts/schedule.py  # copied in at bootstrap
+  scripts/schedule.py
+  .session-inprogress  # transient sentinel; see §7 recovery
 ```
 
-State-loss tiers: **irreplaceable** — domain-map, plan, knowledge-state
-(regenerating the map yields a *different* map; continuity is what cannot be
-rebuilt). **Derivable** — review-queue (one script run). **Disposable** —
-individual logs (history.md keeps the distilled continuity).
+Copying SKILL.md in (like schedule.py) makes the directory fully
+self-contained: README stays a thin pointer plus course-specific facts
+(topic, terminal task, timezone, preconditions: python3 ≥3.9, git) and
+never drifts from the real procedure.
 
-Every state file opens with a 2–4 line format header (comment) describing
-its own schema, so a cold agent can read it unaided.
+Every state file opens with a 2–4 line format header describing its own
+schema.
 
 ### domain-map.md
 
-Header: topic, terminal task (verbatim), freshness ruling (two dials, §9),
-session budget, creation date. Then:
+Header: topic, terminal task (verbatim), `research: yes|no` (was cutoff
+knowledge adequate at bootstrap — one dial, recorded for provenance),
+`timezone:` (IANA name; all "today" computations use it), session
+budget, creation date. Then:
 
-- **Concept blocks**, 15–40 of them (scaled to session budget):
+- **Concept blocks** (~0.75 × session count of them):
 
 ```
 ### inference-cost-curves
 def: why serving LLMs is a marginal-cost business while training is fixed-cost
-prereqs: [scaling-laws-1]
+prereqs: [scaling-laws]
 verify: quiz          # quiz | use | none
-ceiling: 5            # 5 default; 3 for tacit; none for verify: none
+ceiling: solid        # solid (default) | retrievable (tacit concepts)
 threshold: yes        # one of the 5-8 gateway concepts
 misconceptions:
   M1: conflates marginal cost per token with average cost incl. training
-  M2: assumes inference cost is static (ignores hw/algorithmic deflation)
+  M2: assumes inference cost is static
 ```
 
-- Threshold concepts may appear at multiple depths as *separate* concepts
-  (`x-1`, `x-2`) with a prereq edge — spiral curriculum without ever
-  re-entering a unit.
-- Controversies / schools of thought (fuel for debate-style exercises).
-- The ~10 best sources (bound to units in plan.md).
-- **Errata** (append-only): corrections discovered mid-course. Concept ids
-  are never deleted or renamed after bootstrap — knowledge-state rows point
-  at them.
+- All prereq edges are hard: an edge means "cannot teach B before
+  evidencing A." Soft "helps to know" relations are prose in the def
+  line, not edges.
+- Controversies / schools of thought (debate-exercise fuel).
+- Source list (bound to units in plan.md).
+- **Errata** (append-only) in machine-applicable form, merged over the
+  frozen graph by every `schedule.py` run; concept ids are immutable:
 
-Cap: ~4k words. `schedule.py check` validates the prereq graph is a DAG at
-bootstrap.
+```
+erratum 2026-08-02: remove-edge scaling-laws -> inference-cost-curves
+erratum 2026-08-02: note inference-cost-curves "def imprecise: see log/..."
+```
 
 ### plan.md
 
-Session counter (`next-session: 14/30`), cadence note, then unit blocks:
+```
+course-status: active        # active | paused | dormant | closed
+next-session: 14/30
+attendance-streak: 6         # consecutive scheduled sessions attended
+repair-pending: none         # concept-id, set by schedule.py
+next-assets: authored        # pending | authored, per upcoming unit
+```
+
+Then unit blocks — question-framed, sized in sessions with ranges
+*derived* from counts (never stored, so fractional repair sessions never
+force renumbering):
 
 ```
 ## Unit 4: Why did the app layer capture so little value — and will it hold?
-sessions: 4 (14-17)
+sessions: 4
 concepts: [moat-taxonomy, switching-costs-ai, app-layer-margins]
-artifact-milestone: draft the "defensibility" section of the memo
+keystones: [moat-taxonomy]         # 1-2 concepts; teach-back covers these
+artifact-milestone: draft the "defensibility" memo section
 sources: [unit-04-a, unit-04-b]
-status: untouched     # untouched | in-progress | taught | verified
+status: untouched                  # untouched | in-progress | taught | verified
 ```
 
-Units are question-framed, never topic-framed. The agent may reorder or
-split units with a logged reason; units are never re-entered (depth-level
-concepts handle revisiting). Every unit's final session is a teach-back.
+The agent may reorder or split units with a logged reason; units are
+never re-entered (interleaved application, §6, does the revisiting).
+Every unit's final session is a teach-back.
 
 ### knowledge-state.md
 
-One line per concept:
+Exactly one physical line per concept, `- ` delimited, label-parsed
+(never positional), `note:` guaranteed last and right-bound parsed;
+`|` is forbidden outside delimiters (the script strips it from notes):
 
 ```
-- inference-cost-curves | verify: quiz | ceiling: 5 | mastery: 2/5
-  | last: 2026-07-18 | next: 2026-07-21 | interval: 3 | attempts: 1
-  | note: passed definition Q; hit M1 (marginal vs average)
+- id: inference-cost-curves | verify: quiz | ceiling: solid | mastery: retrievable | status: active | last: 2026-07-18 | next: 2026-07-21 | interval: 3 | fails: 0 | note: hit M1 once
 ```
 
-Mastery changes **only** on evidence matching the concept's verify
-mechanism, and the evidence is named in the note. The agent edits mastery /
-attempts / note; `schedule.py update <id> pass|fail` writes last / next /
-interval. The agent never touches dates.
+The agent writes *grade lines into the session log* (§5); only
+`schedule.py` writes this file. Duplicate ids, multi-line records, and
+unknown ids are hard errors surfaced by `check`.
 
 ### assets/unit-NN.md
 
-Per concept in the unit: 2–4 quiz items (question + expected answer +
-distractors drawn from the concept's misconceptions), 1–2 worked examples,
-one contrasting-case pair where applicable, an application prompt tied to
-the artifact, and teach-back probes. Grading at runtime is comparison
-against these keys — never improvised judgment.
+Per concept: 2–4 quiz items (question + expected answer + distractors
+drawn from the misconceptions; for concepts whose terminal use is
+judgment, items are short case-judgments, not definition recall), a
+worked example with a faded variant, a self-explanation prompt, and —
+for `verify: use` concepts — 2–3 reusable application prompts. Per
+keystone concept: a **teach-back rubric**: N required claims that must
+appear, M named misconceptions that must not. Per unit: an
+**interleaved problem set** — 3–5 problems spanning *earlier* units
+where the learner must first identify which concept applies.
 
-Assets for units 1–2 are authored at bootstrap. Assets for unit N+1 are
-authored during unit N's final-session prep (agent-only, uses the map, and
-for moving fields folds in fresh source notes).
+Assets for units 1–2 are authored at bootstrap. Authoring unit N+1's
+assets is a mandatory step of unit N's final-session close (§5), gated
+by plan.md's `next-assets` field: dispatch refuses to start a unit whose
+assets are `pending`.
 
 ### sources/
 
-Distilled notes only — **raw scraped content never enters the course
-directory or any session context**. Each note: ≤800 words of key claims,
-numbers, quotable lines, plus original URL and retrieval date. Distillation
-at ingest is simultaneously the compression (2–3 notes fit in context for a
-whole lesson), the prompt-injection quarantine (sessions only ever read our
-own distilled prose), and the staleness tracker (the retrieval date).
-`sources/index.md`: one line per note → which units use it. Binding to
-units happens at curation time; runtime retrieval is by name, never by
-search.
+Distilled notes only, created at bootstrap — **raw scraped content never
+enters the course directory or any session context**. Each note: ≤800
+words of key claims, numbers, quotable lines, plus URL and retrieval
+date. Distillation is simultaneously compression, prompt-injection
+quarantine, and provenance. Binding to units happens at curation time;
+runtime retrieval is by name, never by search.
 
 ---
 
 ## 4. Bootstrap skill
 
-Onboarding, ~5 user-taps total:
+Onboarding, ~5 user-taps:
 
 1. **"What do you want to learn?"** → topic.
-2. **Terminal-task guesses.** Using whatever the agent knows about the user,
-   offer 3 concrete end-states — "(a) evaluate AI startups' moat and margin
-   claims during diligence, (b) write investable theses about value
-   accrual, (c) ..." — plus a first-class escape hatch ("none of these —
-   tell me in a sentence"). If the agent knows nothing about the user:
-   "two sentences: who are you, and why this topic?" The chosen terminal
-   task becomes line 1 of the map; every concept must justify its seat by
-   tracing to it.
-3. **Freshness ruling — announced, not asked.** Two independent dials the
-   agent sets itself and states in one line, both recorded in the map
-   header: `bootstrap-research: yes|no` (is cutoff knowledge adequate to
-   design this course?) and `refresh: none|per-unit` (will the field move
-   during the course?). British history: no/no. AI economics: yes/yes.
-   The user can override; they are never asked to decide.
-4. **Three path bundles**, each a coherent whole: angle × session count ×
-   artifact (or none), with one-line trade-offs. Session count options
-   10/20/30/40/50; the agent recommends one derived from the terminal task
-   ("conversant" → 20, "produce professional work" → 40; default 30).
-   Choosing among three concrete bundles replaces six abstract questions.
-5. **Design studio (agent-only, async, token-heavy).** In order:
-   - Research sweep if `bootstrap-research: yes` (reports, Substacks,
-     lecture summaries — via whatever tools exist; adapters are optional
-     recipes, never hard dependencies).
-   - Over-generate a candidate concept inventory.
-   - **Backward-design prune** to the concept budget: ~0.75 × session
-     count (a 30-session course holds ~22 concepts; the rest of the
-     sessions are teach-backs, checkpoints, and repair).
-     Concept granularity rule: one concept = one session's teachable unit
-     = one interpretable mastery score. If no single retrieval question
-     separates a 4/5 from a 2/5, the concept is mis-sized.
-   - Tag 5–8 threshold concepts; split them into depth levels.
-   - **Sequence** within the DAG's slack: the thing the user came for
-     early (motivation beats logical purity), heavy/light alternation,
-     confusable pairs adjacent for contrast, units framed as questions.
-     A topological sort is a validity check, never the sequencer.
-   - Author assets for units 1–2; distill and bind source notes.
-   - `schedule.py check` (DAG validation); write all files; copy script in.
-6. **Default-accept gate.** Present the ~10-line unit sequence (not the
-   concept list). "Reply *go*, or tell me what to change." One tap.
-7. **Schedule setup.** Ask for days/times; create the platform's scheduled
-   trigger (cron where available; else the skill works user-initiated —
-   dispatch derives everything from state). Recommend ≥3 sessions/week,
-   with the reason: at ≤2/week the short review intervals stretch and
-   early consolidation measurably weakens.
-8. `git init`, first commit. Session 1 is a **calibration session**: no new
-   material; a short placement probe (5–8 questions across claimed prior
-   knowledge) seeds initial mastery with *evidence* instead of self-report,
-   plus orientation. Prior-knowledge claims from the interview are hints
-   for probe selection, never grounds for nonzero mastery.
+2. **Terminal-task guesses.** Three concrete end-states from what the
+   agent knows about the user, plus a first-class escape hatch ("none of
+   these — tell me in a sentence"); for a stranger: "two sentences: who
+   are you, and why this topic?" The chosen terminal task becomes line 1
+   of the map.
+3. **Research ruling — announced, not asked.** One dial: is cutoff
+   knowledge adequate to design this course (`research: no` — e.g.
+   British history) or not (`research: yes` — e.g. AI economics, sweep
+   reports/newsletters/lecture summaries now, at bootstrap, via whatever
+   tools exist; adapters are optional recipes with graceful
+   degradation). Stated in one line; overridable; never asked.
+4. **Three path bundles** — angle × session count × artifact (or none) —
+   with one-line trade-offs. Session counts 10/20/30/40/50; the agent
+   recommends from the terminal task ("conversant" → 20, "produce
+   professional work" → 40; default 30).
+5. **Design studio (agent-only, async).** Research sweep if ruled;
+   over-generate concept inventory; **backward-design prune** to ~0.75 ×
+   session count (granularity rule: one concept = one session's
+   teachable unit = one interpretable evidence judgment); tag 5–8
+   threshold concepts; sequence within the DAG's slack (the thing the
+   user came for early, heavy/light alternation, confusable pairs
+   adjacent, units framed as questions — a topological sort is a
+   validity check, never the sequencer); author unit 1–2 assets,
+   rubrics, and interleaved problem sets; distill and bind sources;
+   copy in schedule.py and SKILL.md; run `schedule.py check` (must
+   pass, see §7); write everything.
+6. **Default-accept gate.** The ~10-line unit sequence. "Reply *go*, or
+   tell me what to change."
+7. **Schedule setup.** Days/times; cron where the platform has it, else
+   user-initiated (dispatch derives everything from state). Recommend
+   ≥3 sessions/week with the reason (short review intervals stretch at
+   lower cadence and early consolidation weakens).
+8. `git init`, identity configured (or the skill commits with
+   `git -c user.name=… -c user.email=…`), first commit.
+
+**Session 1 is taught, then measured.** It opens with one striking
+flagship idea from the terminal task — the user's first experience is
+learning the thing they came for. Then the placement probe (5–8
+questions across claimed prior knowledge), framed as "finding your
+starting line," seeds initial state via `schedule.py seed`. Interview
+claims are probe-selection hints, never grounds for seeded mastery.
 
 ---
 
 ## 5. Session skill
 
-### Dispatch (pure function of state — no memory, no user choice)
+### Dispatch — explicit priority ladder, pure function of state
 
-Read plan.md's session counter and unit boundaries:
+Read plan.md. First match wins for the session body:
 
-- Unit's final session → **teach-back mode**.
-- Every 7th session → append **checkpoint report** to the close.
-- A hard-prerequisite repair is pending (§6) → **repair mode** (max one per
-  unit boundary, the sole exception to forward motion).
-- Otherwise → **standard mode**.
+1. `course-status` ≠ active → lifecycle handling only (§8), no session.
+2. `repair-pending: <id>` → **repair session** (fractional number, e.g.
+   `17r`: does not advance `next-session`, so unit ranges and the shot
+   clock never shift). Body: reteach the concept from its assets via its
+   worked example, then one application; a pass grade clears the flag.
+   Max one repair per unit boundary.
+3. Unit's final session → **teach-back session**.
+4. Otherwise → **standard session**.
+
+Composition rules (always): the **opening hook, retrieval block, and
+close run in every session type** — modes replace only the middle. Every
+7th session appends the **checkpoint report** to its close, whatever the
+type.
 
 ### Prep step (agent-only, before the user is pinged)
 
-Run `schedule.py queue`; read plan.md, knowledge-state.md,
-review-queue.md, the current unit's asset file and its named source notes,
-the last 2 logs, and history.md. Budget ≤ ~5k tokens of state. If
-`refresh: per-unit` and this is a unit's first session: fetch 1–2 fresh
-items, distill into sources/ as *exercise fodder* — news is problem
-material, never new concepts. Draft the opening. Then send the nudge:
-warm-up hook (last log's open question) + one line of "today: X."
+1. **Recovery gate:** if `.session-inprogress` exists and the tree is
+   dirty → prior session crashed mid-flight → `git reset --hard`,
+   proceed fresh. If the sentinel is absent but the tree is dirty → a
+   completed close whose commit failed → commit as-is, then proceed.
+   Clean tree → normal. (Three cases, all decidable from structure.)
+2. Write `.session-inprogress` (contains the session number — also the
+   single-writer lock; a concurrent trigger seeing it stops).
+3. `schedule.py check` (integrity, §7) and `schedule.py queue`.
+4. Read: plan.md, knowledge-state.md, review-queue.md, current unit's
+   asset file and named source notes, last 2 logs, history.md.
+5. Draft the opening; send the nudge: curiosity hook + "today: X."
 
-If the user doesn't engage, the session simply doesn't happen; the next
-trigger delivers the *same numbered session*. After 2 unanswered nudges,
-switch to a lighter re-engagement message built on the checkpoint report's
-hook question. No auto-advance, no guilt accounting.
+Grades are **not** applied during the session. The agent records
+structured grade lines in the log draft as evidence comes in; state
+mutates once, at close.
 
-### Standard session flow (turn-budgeted, not clock-budgeted)
+### Standard session body
 
-Turn budget ≈ session-minutes × 0.9 assistant turns (15 min ≈ 14 turns).
-The agent tracks its own turn count and lands the close on budget; an
-unfinished thread becomes the log's open question.
+1. **Hook** — a surprising claim or question tied to today's concept.
+2. **Retrieval block** — the queued concepts (≤5), cold, answers may be
+   one word or a short phrase (production, not recognition). **After
+   every item, a mandatory corrective-feedback turn**: the stored
+   answer, plus which named misconception a miss matched. Failed items
+   get one re-probe later in the session. Each item yields a log grade
+   line.
+3. **New material** — the plan's next concept: worked example first
+   (faded variants as the unit progresses), then Socratic questioning,
+   explicit connection to two previously learned concepts, and one
+   self-explanation prompt ("why is that true?"). ≤1 new concept per
+   session, always.
+4. **Apply** — one problem from the unit's **interleaved set** (spanning
+   earlier units; the user must identify the applicable concept before
+   applying it) or one artifact step. `verify: use` concepts surface
+   here via their pre-authored application prompts — this is their
+   spaced re-encounter; the agent never improvises their exercises.
+5. **Tangents are budgeted, not banned:** the user may pull the session
+   off-script for 1–2 exchanges; the agent then parks the thread as the
+   log's open question, where it becomes future application fodder.
 
-1. **Warm-up** — the open question from last log (1–2 turns).
-2. **Retrieval block** — quiz the queued concepts (≤5) cold, no hints,
-   graded against stored keys; wrong answers checked against the
-   misconception distractors so the *note* says what went wrong, not just
-   that it did. Record grades; run `schedule.py update` per concept.
-3. **New material** — the plan's next concept, taught Socratically
-   (question first) from the pre-authored assets, explicitly connected to
-   two previously learned concepts. ~1 new concept per session; never more.
-4. **Apply** — one concrete artifact step or worked problem using today's
-   concept (and, when current-events notes exist, applied to them).
-5. **Close** — write `log/{date}.md` (≤15 lines: session #, taught,
-   evidence and misses, one open question); update knowledge-state and
-   plan; every ~10th log, distill the oldest 5 into history.md; run
-   `schedule.py queue` for next time; `git add -A && git commit`.
-   Commit is the atomic checkpoint: a half-finished close is recovered by
-   resetting to the last commit and re-running one session.
+### Close — a fixed template, structure not memory
 
-### Teach-back mode (unit boundary — this is the exam)
+In order, always: write `log/{date}-{n}.md` (session number, what was
+taught, grade lines, open question, ≤15 lines) → `schedule.py
+commit-grades log/<file>` (applies every grade atomically: mastery
+transitions, dates, statuses, repair-pending, queue regeneration) →
+update plan.md counters (next-session, attendance-streak, unit status,
+`next-assets`) → every ~10th log, distill the oldest 5 into history.md
+and record `distilled-through: <n>` there → `git add -A && git commit`
+→ delete `.session-inprogress`.
 
-The agent plays a smart-but-confused student; the user teaches the unit's
-concepts. Probes come from the misconception lists ("wait — why isn't that
-just average cost?"). Quiz-verified concepts cap at 4/5 via retrieval;
-**5/5 is reachable only here**. `use`-verified concepts get their evidence
-here or from artifact work. The gate is soft: failures feed the review
-queue and the plan advances — unless a failed concept is a hard
-prerequisite (per the graph) of the next unit, which schedules the single
-repair session.
+If the user never engages a nudge, no session occurred; nothing
+advances; the next trigger re-delivers the same numbered session. The
+lifecycle (§8) bounds how long that repeats.
+
+### Teach-back session (unit boundary)
+
+Middle section replaces new-material/apply: the agent plays a
+smart-but-confused student and the user teaches **the unit's 1–2
+keystone concepts only**. Voice notes and bulleted answers are welcome
+(say so). Probes come from the misconception lists. Grading is against
+the stored rubric — required claims present, named misconceptions absent
+— never holistic impression. A rubric pass yields grade line
+`pass`; **`solid` is only awarded on the *delayed* re-probe**: the next
+session's retrieval block re-tests the keystone, and passing *that*
+yields grade line `solid` (fluency today is not storage tomorrow). A
+rubric fail on a concept that is a prereq edge into the next unit makes
+`commit-grades` set `repair-pending`.
+
+**The teach-back close additionally authors assets/unit-(N+1).md** —
+quiz items with keys, rubrics, worked examples, interleaved problems —
+from the map and existing sources, then flips `next-assets: authored`.
+Dispatch will not start the next unit while it is `pending`; the gate is
+structural, not remembered.
 
 ### Checkpoint report (every 7th session, appended to close)
 
-10 lines: progress vs shot clock (session N/M), decaying concepts,
-plateaued concepts with the agent's best guess ("I can't verify X —
-here's where I think you stand; you decide"), any plan changes + reasons,
-one genuinely interesting question as the re-engagement hook.
-**Adjudication flow-back:** the user's verdict on a plateaued concept
-("count it" / "keep trying" / "drop it") is recorded as evidence in the
-note; "drop it" flips the concept to `verify: none`.
+10 lines from `schedule.py report` plus agent prose: progress vs shot
+clock, attendance streak, decaying concepts (script-computed), plateaued
+concepts with the agent's best guess ("you decide"), plan changes +
+reasons, one genuinely interesting question as the re-engagement hook.
+**Adjudication flow-back:** the user's verdict on a plateaued concept —
+"count it" (grade line `pass` with note), "keep trying" (fails counter
+reset), "drop it" (`schedule.py set-verify <id> none`) — is recorded at
+the next close. **Reprune offer:** if the user is ≥2 weeks behind their
+chosen cadence, the checkpoint offers to shrink the course — re-run the
+backward-design prune, drop non-threshold untaught concepts, keep every
+interval on what remains — so a stalled user finishes *something*
+(Principle 5, mid-course).
 
 ---
 
-## 6. Verification & mastery
+## 6. Mastery, evidence, verification
 
-- Two mechanisms, one ceiling field — replacing v1's four classes:
-  `verify: quiz` (retrieval against stored keys; full spacing treatment),
-  `verify: use` (evidence only through application, artifact work, or
-  teach-back — never quizzed as recall), `verify: none` (exposure only,
-  untracked). `ceiling: 3` marks tacit/judgment concepts: the system is
+- **Three evidence-anchored bands** (replacing 0–5):
+  - `exposed` — taught, no retrieval evidence yet.
+  - `retrievable` — passed cued/cold retrieval with corrective feedback.
+  - `solid` — transfers cold: delayed rubric-passed teach-back, or an
+    application/artifact judged against stored criteria.
+- Mechanisms: `verify: quiz` (retrieval against stored keys),
+  `verify: use` (evidence only through application/teach-back; never
+  quizzed as recall), `verify: none` (exposure, untracked).
+  `ceiling: retrievable` marks tacit/judgment concepts — the system is
   forbidden from demanding stronger evidence than "conversant," because
-  stronger evidence doesn't exist. These get scheduled *re-encounters* in
-  new contexts, with qualitative notes, not re-tests.
-- Mastery 0–5, moves only on evidence matching the mechanism, evidence
-  named in the note. Equal guard against inflation (marking taught things
-  learned) and over-verification (grinding tacit concepts for certainty).
-- **Attempt budget, flat:** 3 consecutive failed verifications → try the
-  other mechanism once if applicable → else mark `plateaued` and surface at
-  the next checkpoint for human adjudication. Never loop.
+  stronger evidence doesn't exist; they get pre-authored re-encounters,
+  not re-tests.
+- All transitions live in `schedule.py`'s stated table; the agent
+  supplies only grade lines with notes. Evidence is named in the note.
+- **Failure steps back one interval** (16→7), never to the floor;
+  repeated consecutive failure (`fails: 3`) → `status: plateaued`,
+  surfaced at the next checkpoint. Never loop.
 
-## 7. Scheduling (all of it in schedule.py)
+## 7. schedule.py — the deterministic core
 
-- Intervals: 1 → 3 → 7 → 16 → 35 days. A **failed attended review** resets
-  to 1. Unattended days never reset anything (a skipped Tuesday is not a
-  miss). Due = `next ≤ today`, delivered at the next session that occurs.
-- Queue cap: 5 per session, oldest first; overflow rolls. Absence produces
-  a longer tail, never a wall.
-- **Graduation:** a concept passing at the 35-day interval is `retired` —
-  leaves the queue permanently, mastery stands. This is a concept's
-  terminal state.
-- **Course terminal state:** all units `taught`/`verified` and session
-  counter exhausted → agent writes a course report (what was learned, what
-  plateaued, what was retired vs still fragile) and offers exactly one
-  follow-on: a maintenance mode (~1 short review session / 2 weeks until
-  the queue empties) or graduation now.
-- Script interface: `schedule.py check | queue | update <id> pass|fail`.
-  Stdlib only. The agent's only date-related job is invoking it.
+Verbs:
 
-## 8. Sources & freshness
+```
+check                      # integrity: DAG (errata-merged); cross-file id
+                           #   agreement (map = knowledge-state = plan =
+                           #   assets; no orphans/dupes/multi-line records);
+                           #   concept count in band; 5-8 threshold tags;
+                           #   every startable unit's assets exist with >=1
+                           #   key per quiz concept. Run at bootstrap AND
+                           #   every prep. Loud failure.
+queue                      # regenerate review-queue.md: status active,
+                           #   next <= today (course timezone), cap 5,
+                           #   oldest first, overflow rolls
+seed <id> <band>           # calibration: set initial mastery + first date
+commit-grades <logfile>    # parse grade lines; apply the transition table,
+                           #   intervals, statuses, repair-pending; guarded
+                           #   by session number (re-running is a no-op)
+set-verify <id> <mech>     # adjudication verdicts
+report                     # progress, decaying, plateaued — for checkpoints
+```
 
-Covered in §3 (sources/) and §4–5 (dials, per-unit refresh). Summary of
-the invariant: ingestion happens at bootstrap and unit-boundary prep, in a
-research context; sessions read only named, distilled, dated notes; raw
-external text never reaches a teaching context; current events enter as
-exercises, never as concepts.
+Scheduling: intervals 1 → 3 → 7 → 16 → 35 → **90 → 180** days. There is
+no permanent retirement while the course runs: post-35 passes simply
+stretch toward the retention horizon. Due-ness uses the course timezone
+via `zoneinfo`. Unattended days never reset anything. Queue cap 5,
+oldest first — absence produces a longer tail, never a wall.
+
+**Course terminal state:** all units taught/verified and the counter
+exhausted → **graduation is a moment**: the capstone (finished artifact
+or a final cumulative teach-back) is the closing act; the course report
+is the trophy. *Then* maintenance is the default continuation — one
+short review session per ~2 weeks servicing the 90/180-day tail — with
+opt-out, framed as "keeping it, not still studying it."
+
+## 8. Lifecycle (adherence machinery)
+
+- `course-status: active | paused | dormant | closed` in plan.md.
+- After 3 consecutive silent triggers → `paused`, one low-shame message
+  ("say *resume* whenever — everything keeps"), pings drop to at most
+  fortnightly, each built on the last checkpoint's hook question.
+- `resume` → re-entry session: warm, review-only, no new material, no
+  backlog framing ("here's where we are" not "here's what you owe").
+- An explicit quit → `closed` + a graceful exit report (what was
+  learned, what's fragile). Closing is a recorded outcome, not a
+  failure state.
+- Attendance streak (not correctness streak) is the one positive
+  counter, shown at closes and checkpoints.
 
 ## 9. Recovery, portability, packaging
 
-- The course directory is a git repo; every session close is a commit;
-  pushing to a private remote is the user's one optional backup step.
-- README.md in the course dir carries resume instructions sufficient for
-  an agent *without the skill installed* to run a passable session — the
-  resurrection test is the acceptance test, verified once at bootstrap by
-  actually simulating it (fresh context, directory only, "run session 2").
+- The course directory is a git repo; every close is a commit; a private
+  remote is the user's one optional backup step.
+- Resurrection preconditions, stated in README: python3 ≥3.9, git. The
+  directory contains SKILL.md and schedule.py, so a fresh agent needs
+  nothing else. The resurrection test is run once at bootstrap for real:
+  fresh context, directory only, "run the next session."
 - Skill package:
 
 ```
 tutor/
-  SKILL.md             # session dispatch + flow, <2k words
+  SKILL.md             # session dispatch + flows, <2k words
   bootstrap.md         # the §4 procedure
   scripts/schedule.py
   templates/           # every state file, with format headers
-  example-course/      # one complete tiny course (3 units) — the format
-                       # documentation an LLM actually learns from
+  example-course/      # one complete tiny course — format documentation
+                       #   an LLM actually learns from
 ```
 
-- No external service dependencies in the session path. Ingestion adapters
-  (YT-summary via a second model, Substack scraping) are optional recipes
-  in bootstrap.md with graceful degradation ("or paste a transcript").
+- No external service dependencies anywhere in the session path.
+  Ingestion adapters are optional bootstrap recipes with degradation
+  ("or paste a transcript").
 
 ## 10. Invariants
 
-1. Session number only increments. Nothing mastery-related stalls the
-   plan except one repair session per unit boundary.
-2. Mastery moves only on evidence matching the concept's mechanism,
-   graded against stored keys, evidence named in the note.
-3. Weak concepts never block; they persist in the (capped) queue until
-   evidenced, plateaued, or retired.
-4. The agent never does date arithmetic and never improvises grading
-   criteria. Script + keys, always.
+1. `next-session` only increments; repairs are fractional; nothing
+   mastery-related stalls the plan except one repair per unit boundary.
+2. Mastery moves only via `schedule.py`'s transition table on grade
+   lines; grades come only from stored keys and rubrics; evidence is
+   named in the note.
+3. Weak concepts never block; they persist in the capped queue until
+   evidenced, plateaued (→ human adjudication), or the course closes.
+4. The agent never does date arithmetic, never decides mastery moves,
+   never improvises grading criteria or exercises for `use` concepts.
 5. All state is human-legible markdown inside the course directory. No
    hidden state. The resurrection test must pass.
-6. Raw external content never enters session context; distilled, dated
-   notes only.
-7. The map's concept ids are immutable after bootstrap; corrections go to
-   errata, append-only.
-8. Session close is atomic via git commit; on doubt, reset and re-run.
-9. Missed days cost calendar time — never progress, never interval resets.
-10. Compression is pruning. Session budget fixes concept budget; content
-    is never "covered faster."
+6. Raw external content never enters the directory or any session
+   context; distilled, dated notes only; ingestion happens only at
+   bootstrap.
+7. Concept ids are immutable; graph corrections are machine-form errata,
+   merged by every script run.
+8. State mutates once per session, at the close, then commits; the
+   sentinel + dirty-tree rules make every crash window decidable.
+9. Missed days cost calendar time — never progress, never intervals.
+   Every retrieval ends with corrective feedback. Failure steps back
+   one interval, never to zero.
+10. Compression is pruning — at bootstrap and at reprune. Content is
+    never covered faster.
 
 ## 11. Defaults
 
 | Parameter | Default |
 |---|---|
-| Course size | 30 sessions (options 10/20/30/40/50) |
+| Course size | 30 sessions (10/20/30/40/50) |
 | Concept budget | ~0.75 × sessions |
-| Session length | 15 min ≈ 14 assistant turns (10–20 min supported) |
+| Session length | ~15 min, calibrated down from pilot data |
 | Cadence | user-chosen days; ≥3/week recommended |
-| Unit size | 3–5 sessions, final one = teach-back |
-| Checkpoint report | every 7th session |
-| Review intervals | 1/3/7/16/35 days; graduate after 35 passes |
-| Review queue cap | 5/session, oldest first |
+| Unit size | 3–5 sessions; final = teach-back on 1–2 keystones |
+| Checkpoint | every 7th session |
+| Intervals | 1/3/7/16/35/90/180; fail steps back one |
+| Queue cap | 5/session, oldest first |
 | New material | ≤1 concept/session |
-| Attempt budget | 3 fails → other mechanism once → plateaued |
-| Source notes | ≤800 words each, ≤4 per unit |
-| Threshold concepts | 5–8 per course, depth-leveled |
+| Plateau | 3 consecutive fails → checkpoint adjudication |
+| Auto-pause | after 3 silent triggers; fortnightly ping in paused |
+| Reprune trigger | ≥2 weeks behind chosen cadence, offered at checkpoint |
+| Source notes | ≤800 words, ≤4/unit, bootstrap-time only |
+| Threshold concepts | 5–8 per course |
+| Tangent budget | 1–2 exchanges, then parked as open question |
 
-## 12. Open questions (for the critique round)
+## 12. Open questions
 
-1. Turn-budget ↔ minutes mapping is a guess; needs calibration in pilot.
-2. Asset authoring quality at unit-boundary prep (weaker context than
-   bootstrap) — does unit N+1's asset file degrade? Mitigations?
-3. Placement probe (session 1) sizing: 5–8 questions may under-calibrate
-   a user with deep partial knowledge.
-4. Multi-course concurrency (same user, two courses) — out of scope for
-   v1, but the directory model should not preclude it.
-5. Does default-accept at the gate under-invest exactly for the users
-   least able to critique a syllabus (novices)?
-6. `use`-verified concepts with no artifact (user chose none): worked
-   problems carry all the load — is that evidence strong enough for 5/5?
+1. Turn/length calibration — measure real elapsed time in the pilot;
+   default conservative.
+2. Asset quality at teach-back-close authoring (weaker context than
+   bootstrap) — inspect unit-3+ assets in the pilot.
+3. Placement probe sizing for users with deep partial knowledge.
+4. Whether `solid` via artifact evidence needs its own rubric form.
+5. The novice default-accept paradox (least able to critique the
+   syllabus are most likely to accept it) — does the reprune loop
+   sufficiently correct bad bootstraps?
+6. v2 extension: per-unit source refresh as a separate tool-bearing
+   mode, for fast-moving fields beyond the pilot.
 
 ## 13. Roadmap
 
-1. `schedule.py` + templates + example-course (the deterministic layer).
+1. `schedule.py` (transition table, all verbs) + templates +
+   example-course — the deterministic layer, test-first.
 2. SKILL.md + bootstrap.md against the templates.
 3. Pilot: bootstrap the AI-economics course for real; run 3 sessions.
 4. Resurrection test from the pilot directory in a fresh context.
-5. Revise from pilot friction; then package for export.
+5. Calibrate turn budgets and asset quality from pilot friction; then
+   package for export.

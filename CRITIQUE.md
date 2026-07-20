@@ -237,6 +237,10 @@ prevents the cron+user-initiated double-writer.
 
 ## Status
 
-Amendments A–H are correctness fixes and not controversial; I and J are
-adopted recommendations. Pending: user sign-off on the three decision
-points, then SPEC v2.1.
+Resolved in SPEC v2.1. User decisions on the three open points:
+(1) mastery scale → **3 bands**; (2) per-unit refresh → **cut from v1**
+(bootstrap-only ingestion; refresh mode is a v2 extension hook —
+this also dissolved the §2/§5 tool contradiction outright and moved
+unit-N+1 asset authoring to the teach-back close, gated by
+`next-assets`); (3) repair sessions → **fractional numbers** (`17r`).
+All amendments A–J applied.
