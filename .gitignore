@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .session-inprogress
 *.tmp
+
+# secrets — never commit
+.env
+.env.*
+!.env.example

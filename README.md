@@ -48,6 +48,7 @@ real course end to end with a real learner.
 | [`checkpoint.md`](checkpoint.md) | Checkpoints, adjudication, dormancy, graduation |
 | [`scripts/schedule.py`](scripts/schedule.py) | The deterministic core (stdlib only) |
 | [`templates/`](templates) | Every state file, self-documenting |
+| [`tools/venice.py`](tools/venice.py) | Optional research helper for bootstrap: text + real YouTube ingestion |
 | [`example-course/`](example-course) | A complete 12-session course, mid-flight |
 | [`tests/test_schedule.py`](tests/test_schedule.py) | Written first; pins every interface |
 | [`CRITIQUE.md`](CRITIQUE.md) · [`CRITIQUE-R2.md`](CRITIQUE-R2.md) · [`CRITIQUE-R3.md`](CRITIQUE-R3.md) | Three adversarial panels, in full |

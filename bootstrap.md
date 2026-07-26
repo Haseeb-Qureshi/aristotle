@@ -55,6 +55,17 @@ never enters the course directory. If no research tool is available, ask
 for a link or a pasted transcript, or proceed on training knowledge and
 say that you did.
 
+For material that only exists as a talk or lecture, `tools/venice.py`
+will actually watch a public YouTube video and answer questions about it:
+
+```
+python3 tools/venice.py --video <url> "the distillation prompt"
+```
+
+Distill the result into a `sources/` note like any other source. Do not
+paste a video URL into an ordinary prompt — the model will answer from
+training data for famous videos and disclaim access for the rest.
+
 ## Step 4 — Three paths (one tap)
 
 Three coherent bundles — angle × session count × artifact — each with a
