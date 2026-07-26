@@ -2,30 +2,33 @@
 """elenchus schedule.py — the deterministic core.
 
 Owns everything the teaching agent must never improvise: date arithmetic,
-the mastery transition table, status changes, queue generation, integrity
-checks, and crash recovery. The agent's entire write surface is grade
-lines in a session log; this script does the rest.
+the mastery transition table, session dispatch, the review queue, integrity
+checks, and crash recovery. The agent's entire write surface is grade lines
+in a session log; this script does the rest.
 
 Stdlib only (python3 >= 3.9). Copied into every course directory at
 bootstrap so a resurrected course is self-contained.
 
-Verbs:
+The two verbs a session uses:
+  begin                       recover + lock + check + dispatch + queue
+  close <logfile>             grades + plan.md + git + unlock, atomically
+
+The rest are for lifecycle and repair:
   check                       integrity pass (loud failure)
   queue                       regenerate review-queue.md
-  seed <id> <band>            calibration upsert (idempotent)
-  commit-grades <logfile>     apply a session's grade lines atomically
+  report                      progress summary (for the AGENT, never shown)
+  recover                     sentinel three-way recovery
+  seed <id> <band>            placement calibration (idempotent)
   set-verify <id> <mech>      adjudication verdicts
-  reprune --drop a,b,c        shrink the course coherently
-  report                      progress / due / plateaued summary
-  recover                     sentinel + git three-way recovery
+  reprune <ids>               shrink the course coherently
+  commit-grades <logfile>     apply grades only (close does this for you)
 
-State ownership: knowledge-state.md is written ONLY by this script, via
-atomic os.replace. Script-owned course flags (committed-sessions,
-solid-pending, repair-pending) live in its header block so one atomic
-write covers grades and flags together.
+State ownership: knowledge-state.md and plan.md's header are written ONLY
+by this script. Mastery is DERIVED from interval and fails, never stored —
+there is no band to inflate.
 
 Test hooks: ELENCHUS_TODAY (YYYY-MM-DD) pins "today"; ELENCHUS_NOW pins
-the recovery clock. Absent, the course timezone from domain-map.md rules.
+the recovery clock.
 """
 
 import argparse
@@ -37,18 +40,22 @@ import sys
 from pathlib import Path
 
 LADDER = [1, 3, 7, 16, 35, 90, 180]
-BANDS = ["none", "exposed", "retrievable", "solid"]
 STATUSES = {"untaught", "active", "plateaued", "dropped"}
 VERIFIES = {"quiz", "use", "none"}
-# 'solid' is deliberately NOT a writable result: the script derives it.
 RESULTS = {"taught", "pass", "fail", "rubric-pass", "rubric-fail"}
-RECORD_FIELDS = ["id", "verify", "ceiling", "mastery", "status", "last",
-                 "next", "interval", "fails", "reprobe", "note"]
+RECORD_FIELDS = ["id", "verify", "status", "last", "next",
+                 "interval", "fails", "note"]
 INT_FIELDS = {"interval", "fails"}
+COURSE_STATUSES = {"active", "paused", "maintenance", "closed"}
+UNIT_STATUSES = {"untouched", "in-progress", "taught"}
 SENTINEL = ".session-inprogress"
 QUEUE_CAP = 5
+TEACHING_CAP = 3          # cap when the session also teaches new material
 PLATEAU_FAILS = 3
-STALE_HOURS = 2  # a sentinel younger than this means a session is LIVE
+STALE_HOURS = 2           # a sentinel younger than this means a session is LIVE
+DORMANT_DAYS = 14
+MIN_CONSOLIDATION = 2     # sessions reserved at the end for mixed review
+DATE_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
 
 
 class FormatError(Exception):
@@ -57,6 +64,22 @@ class FormatError(Exception):
 
 class IntegrityError(Exception):
     """Cross-file state disagrees, or an operation would corrupt it."""
+
+
+def _read(path: Path) -> str:
+    return Path(path).read_text(encoding="utf-8")
+
+
+def _write(path: Path, text: str):
+    """Atomic: the reader never sees a half-written file."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _strip_comments(text: str) -> str:
+    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
 
 
 # --------------------------------------------------------------- clock
@@ -75,13 +98,12 @@ def _today(course: Path) -> dt.date:
     return dt.date.today()
 
 
-def _now(course: Path) -> dt.datetime:
+def _now() -> dt.datetime:
+    """Wall clock, naive local. Only ever compared against a file mtime
+    from the same machine, so no timezone can enter the comparison."""
     env = os.environ.get("ELENCHUS_NOW")
     if env:
         return dt.datetime.fromisoformat(env)
-    if os.environ.get("ELENCHUS_TODAY"):
-        # deterministic tests: noon on the pinned day
-        return dt.datetime.combine(_today(course), dt.time(12, 0))
     return dt.datetime.now()
 
 
@@ -92,12 +114,11 @@ HEADER_RE = re.compile(r"<!-- elenchus:state\n(.*?)\n-->\n?", re.S)
 
 
 def parse_state(text: str):
-    """Return (meta, records). Loud on any format violation."""
+    """Return (meta, records). Loud on any format or VALUE violation."""
     m = HEADER_RE.search(text)
     if not m:
         raise FormatError("knowledge-state.md missing elenchus:state header")
-    meta = {"committed-sessions": [], "solid-pending": "none",
-            "repair-pending": "none"}
+    meta = {"committed-sessions": [], "repair-pending": "none"}
     for line in m.group(1).splitlines():
         line = line.strip()
         if not line or line.startswith("format:"):
@@ -106,15 +127,13 @@ def parse_state(text: str):
         key, val = key.strip(), val.strip()
         if key == "committed-sessions":
             meta[key] = [t for t in re.split(r"[,\s]+", val) if t]
-        elif key in ("solid-pending", "repair-pending"):
+        elif key == "repair-pending":
             meta[key] = val or "none"
         else:
             raise FormatError(f"unknown state-header field: {key}")
 
     records = {}
-    # format-documentation comments are allowed (and encouraged) in the
-    # body; strip them before record parsing
-    body = re.sub(r"<!--.*?-->", "", text[m.end():], flags=re.S)
+    body = _strip_comments(text[m.end():])
     for raw in body.splitlines():
         line = raw.strip()
         if not line:
@@ -130,10 +149,26 @@ def parse_state(text: str):
             key = key.rstrip(":").strip()
             if key not in RECORD_FIELDS:
                 raise FormatError(f"unknown record field {key!r} in {raw!r}")
-            rec[key] = int(val) if key in INT_FIELDS else val.strip()
+            rec[key] = val.strip()
         missing = [f for f in RECORD_FIELDS if f not in rec]
         if missing:
             raise FormatError(f"record {rec.get('id')!r} missing {missing}")
+        # value validation: a wrong value here is silent corruption later
+        if rec["verify"] not in VERIFIES:
+            raise FormatError(f"{rec['id']}: verify={rec['verify']!r} not in "
+                              f"{sorted(VERIFIES)}")
+        if rec["status"] not in STATUSES:
+            raise FormatError(f"{rec['id']}: status={rec['status']!r} not in "
+                              f"{sorted(STATUSES)}")
+        for f in ("last", "next"):
+            if rec[f] != "-" and not DATE_RE.match(rec[f]):
+                raise FormatError(
+                    f"{rec['id']}: {f}={rec[f]!r} is not YYYY-MM-DD or '-'")
+        for f in INT_FIELDS:
+            if not re.fullmatch(r"\d+", rec[f]):
+                raise FormatError(
+                    f"{rec['id']}: {f}={rec[f]!r} is not a non-negative int")
+            rec[f] = int(rec[f])
         if rec["id"] in records:
             raise FormatError(f"duplicate concept id: {rec['id']}")
         records[rec["id"]] = rec
@@ -143,9 +178,11 @@ def parse_state(text: str):
 def serialize_state(meta, records) -> str:
     head = ["<!-- elenchus:state",
             "committed-sessions: " + ",".join(meta["committed-sessions"]),
-            f"solid-pending: {meta['solid-pending']}",
             f"repair-pending: {meta['repair-pending']}",
-            "-->"]
+            "-->",
+            "<!-- Written ONLY by scripts/schedule.py. Never hand-edit: the",
+            "     agent's write surface is grade lines in a session log.",
+            "     Mastery is derived from interval/fails, never stored. -->"]
     lines = []
     for rec in records.values():
         rec = dict(rec)
@@ -157,29 +194,42 @@ def serialize_state(meta, records) -> str:
 
 
 def load_state(course: Path):
-    return parse_state((Path(course) / STATE_FILE).read_text())
+    return parse_state(_read(Path(course) / STATE_FILE))
 
 
 def save_state(course: Path, meta, records):
     """Single atomic write: grades and flags land together or not at all."""
-    path = Path(course) / STATE_FILE
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(serialize_state(meta, records))
-    os.replace(tmp, path)
+    _write(Path(course) / STATE_FILE, serialize_state(meta, records))
+
+
+def band(rec) -> str:
+    """The DERIVED mastery band. Display only — nothing schedules on it."""
+    if rec["status"] == "dropped":
+        return "dropped"
+    if rec["status"] == "plateaued":
+        return "stuck"
+    if rec["status"] == "untaught":
+        return "untaught"
+    if rec["interval"] >= 35 and rec["fails"] == 0:
+        return "solid"
+    if rec["interval"] >= 7:
+        return "retrievable"
+    return "exposed"
 
 
 # ----------------------------------------------------------- domain map
 
 CONCEPT_RE = re.compile(r"^### (\S+)\s*$", re.M)
 ERRATUM_RE = re.compile(
-    r"^erratum [^:]*:\s*(remove-edge|add-edge)\s+(\S+)\s*->\s*(\S+)", re.M)
+    r"^\s*[-*]?\s*erratum\b[^:]*:\s*(remove-edge|add-edge)\s+(\S+)\s*->\s*"
+    r"(\S+)", re.M | re.I)
 
 
 def _map_header(course: Path) -> dict:
-    text = (Path(course) / "domain-map.md").read_text()
+    text = _read(Path(course) / "domain-map.md")
     head = text.split("###", 1)[0]
     out = {}
-    for line in head.splitlines():
+    for line in _strip_comments(head).splitlines():
         k, sep, v = line.partition(":")
         if sep and " " not in k.strip():
             out[k.strip()] = v.strip()
@@ -187,15 +237,17 @@ def _map_header(course: Path) -> dict:
 
 
 def parse_map(course: Path):
-    """Return {id: {prereqs, verify, ceiling, threshold}} with errata
+    """Return {id: {prereqs, verify, threshold, misconceptions}} with errata
     already merged over the frozen graph (ids stay immutable; edges heal)."""
-    text = (Path(course) / "domain-map.md").read_text()
-    ids = CONCEPT_RE.findall(text)
+    text = _read(Path(course) / "domain-map.md")
     blocks = CONCEPT_RE.split(text)[1:]  # id, body, id, body ...
     concepts = {}
     for cid, body in zip(blocks[0::2], blocks[1::2]):
-        c = {"prereqs": [], "verify": "quiz", "ceiling": "solid",
-             "threshold": "no", "misconceptions": []}
+        # a concept's body ends at the next '## ' section (Sources,
+        # Controversies, Errata) — otherwise their lines leak into it
+        body = _strip_comments(re.split(r"^## ", body, 1, flags=re.M)[0])
+        c = {"prereqs": [], "verify": "quiz", "threshold": "no",
+             "misconceptions": []}
         in_misc = False
         for line in body.splitlines():
             indented = line.startswith((" ", "\t"))
@@ -213,35 +265,62 @@ def parse_map(course: Path):
             if k == "prereqs":
                 c["prereqs"] = [p for p in
                                 re.split(r"[,\s]+", v.strip("[]")) if p]
-            elif k in ("verify", "ceiling", "threshold"):
+            elif k in ("verify", "threshold"):
                 c[k] = v
         concepts[cid] = c
     for op, a, b in ERRATUM_RE.findall(text):
         if b in concepts:
             pre = concepts[b]["prereqs"]
-            if op == "remove-edge" and a in pre:
+            if op.lower() == "remove-edge" and a in pre:
                 pre.remove(a)
-            if op == "add-edge" and a not in pre:
+            if op.lower() == "add-edge" and a not in pre:
                 pre.append(a)
     return concepts
 
 
 # ----------------------------------------------------------------- plan
 
-UNIT_RE = re.compile(r"^## Unit (\d+):", re.M)
+UNIT_RE = re.compile(r"^Unit (\d+):\s*(.*)$")
+PLAN_HEADER_FIELDS = ["course-status", "next-session", "cadence",
+                      "sessions-done", "last-attended", "re-entry-pending"]
 
 
 def parse_plan(course: Path):
-    text = (Path(course) / "plan.md").read_text()
+    """Return (header, units). Units carry their DECLARED number and their
+    derived [start, end] session range."""
+    text = _strip_comments(_read(Path(course) / "plan.md"))
     header = {}
-    for line in text.split("## ", 1)[0].splitlines():
+    for line in text.split("\n## ", 1)[0].splitlines():
         k, sep, v = line.partition(":")
-        if sep:
+        if sep and k.strip() in PLAN_HEADER_FIELDS:
             header[k.strip()] = v.strip()
-    units = []
+    missing = [f for f in PLAN_HEADER_FIELDS if f not in header]
+    if missing:
+        raise FormatError(f"plan.md header missing {missing}")
+    if header["course-status"] not in COURSE_STATUSES:
+        raise FormatError(f"course-status={header['course-status']!r} not in "
+                          f"{sorted(COURSE_STATUSES)}")
+    if not re.fullmatch(r"\d+/\d+", header["next-session"]):
+        raise FormatError(
+            f"next-session={header['next-session']!r} must be N/M")
+    if header["re-entry-pending"] not in ("yes", "no"):
+        raise FormatError("re-entry-pending must be yes|no")
+    if header["last-attended"] != "-" \
+            and not DATE_RE.match(header["last-attended"]):
+        raise FormatError("last-attended must be YYYY-MM-DD or '-'")
+    for f in ("cadence", "sessions-done"):
+        if not re.fullmatch(r"\d+", header[f]):
+            raise FormatError(f"{f}={header[f]!r} is not a non-negative int")
+
+    units, cursor = [], 1
     for chunk in text.split("\n## ")[1:]:
-        unit = {"title": chunk.splitlines()[0], "concepts": [],
-                "keystones": [], "status": ""}
+        head = chunk.splitlines()[0].strip()
+        m = UNIT_RE.match(head)
+        if not m:
+            continue          # a non-unit '## ' section is not a unit
+        unit = {"num": int(m.group(1)), "title": m.group(2).strip(),
+                "concepts": [], "keystones": [], "status": "untouched",
+                "sessions": 0, "artifact": ""}
         for line in chunk.splitlines()[1:]:
             k, sep, v = line.partition(":")
             k, v = k.strip(), v.strip()
@@ -250,8 +329,51 @@ def parse_plan(course: Path):
                            re.split(r"[,\s]+", v.strip("[]")) if p]
             elif k == "status":
                 unit["status"] = v
+            elif k == "sessions":
+                unit["sessions"] = int(v) if v.isdigit() else 0
+            elif k == "artifact-milestone":
+                unit["artifact"] = v
+        if unit["status"] not in UNIT_STATUSES:
+            raise FormatError(f"unit {unit['num']}: status="
+                              f"{unit['status']!r} not in "
+                              f"{sorted(UNIT_STATUSES)}")
+        unit["start"] = cursor
+        unit["end"] = cursor + unit["sessions"] - 1
+        cursor = unit["end"] + 1
         units.append(unit)
     return header, units
+
+
+def course_size(header) -> int:
+    return int(header["next-session"].split("/")[1])
+
+
+def session_index(header) -> int:
+    return int(header["next-session"].split("/")[0])
+
+
+def write_plan_header(course: Path, updates: dict):
+    """Rewrite header fields in place, preserving everything else."""
+    path = Path(course) / "plan.md"
+    text = _read(path)
+    for key, val in updates.items():
+        pat = re.compile(rf"^{re.escape(key)}:.*$", re.M)
+        if not pat.search(text):
+            raise IntegrityError(f"plan.md has no {key!r} line to update")
+        text = pat.sub(f"{key}: {val}", text, count=1)
+    _write(path, text)
+
+
+def write_unit_status(course: Path, num: int, status: str):
+    path = Path(course) / "plan.md"
+    text = _read(path)
+    chunks = text.split("\n## ")
+    for i, chunk in enumerate(chunks[1:], start=1):
+        m = UNIT_RE.match(chunk.splitlines()[0].strip())
+        if m and int(m.group(1)) == num:
+            chunks[i] = re.sub(r"^status:.*$", f"status: {status}",
+                               chunk, count=1, flags=re.M)
+    _write(path, "\n## ".join(chunks))
 
 
 # ---------------------------------------------------------- grade lines
@@ -259,6 +381,7 @@ def parse_plan(course: Path):
 SESSION_TOKEN_RE = re.compile(r"^\d+(r\d*)?$")
 GRADE_RE = re.compile(
     r"^- grade:\s*(\S+)\s*\|\s*result:\s*(\S+)\s*\|\s*note:\s*(.*)$")
+LOOKS_LIKE_GRADE = re.compile(r"grade\s*\**\s*:", re.I)
 
 
 def valid_session_token(tok: str) -> bool:
@@ -267,30 +390,52 @@ def valid_session_token(tok: str) -> bool:
 
 def parse_log_grades(text: str):
     """Return (session_token, grades). Any line that LOOKS like a grade
-    but doesn't parse is a loud error — silence is how mastery dies."""
+    but doesn't parse is a loud error — silence is how mastery dies.
+
+    If the log has a '## grades' section, ONLY that section is scanned:
+    an example grade line quoted in prose must not mutate mastery."""
     session = None
-    grades = []
     for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("session:"):
+        if line.strip().startswith("session:"):
             session = line.split(":", 1)[1].strip()
-        elif line.startswith("- grade:"):
-            m = GRADE_RE.match(line)
-            if not m:
-                raise FormatError(f"malformed grade line: {line!r}")
-            cid, result, note = m.groups()
-            if result not in RESULTS:
-                raise FormatError(
-                    f"invalid result {result!r} (allowed: "
-                    f"{sorted(RESULTS)}; 'solid' is never writable — "
-                    "the script derives it)")
-            grades.append({"id": cid, "result": result,
-                           "note": note.strip()})
+            break
     if session is None:
         raise FormatError("log has no 'session:' line")
     if not valid_session_token(session):
         raise FormatError(f"bad session token {session!r} "
                           "(grammar: digits, optional r-suffix e.g. 17r)")
+
+    scope = text
+    m = re.search(r"^##+\s*grades\s*$", text, re.M | re.I)
+    if m:
+        rest = text[m.end():]
+        nxt = re.search(r"^##+\s", rest, re.M)
+        scope = rest[:nxt.start()] if nxt else rest
+
+    grades, seen = [], {}
+    for line in scope.splitlines():
+        line = line.strip()
+        # catch the near-misses an LLM writes (en-dash bullet, bold label)
+        # so they fail loudly instead of vanishing
+        if not LOOKS_LIKE_GRADE.match(line.lstrip("-–—*• \t")):
+            continue
+        m = GRADE_RE.match(line)
+        if not m:
+            raise FormatError(
+                f"malformed grade line: {line!r}\n"
+                "  grammar: - grade: <id> | result: <r> | note: <text>")
+        cid, result, note = m.groups()
+        if result not in RESULTS:
+            raise FormatError(
+                f"invalid result {result!r} (allowed: {sorted(RESULTS)})")
+        if cid in seen:
+            raise FormatError(
+                f"two grade lines for {cid!r} in one log "
+                f"({seen[cid]!r} then {result!r}) — write ONE verdict per "
+                "concept per session; a same-session re-probe does not "
+                "upgrade the original result")
+        seen[cid] = result
+        grades.append({"id": cid, "result": result, "note": note.strip()})
     return session, grades
 
 
@@ -308,43 +453,31 @@ def ladder_down(iv: int) -> int:
     return below[-1] if below else LADDER[0]
 
 
-def _band_cap(band: str, ceiling: str) -> str:
-    if BANDS.index(band) > BANDS.index(ceiling):
-        return ceiling
-    return band
-
-
 def _apply_grade(rec, grade, meta, today: dt.date, next_unit_needs):
     """The transition table. One grade, one record, pure and total."""
     result = grade["result"]
     iso = today.isoformat()
+    was_repair = meta["repair-pending"] == rec["id"]
 
     if result == "taught":
-        rec["status"] = "active" if rec["status"] == "untaught" \
-            else rec["status"]
-        if rec["mastery"] == "none":
-            rec["mastery"] = _band_cap("exposed", rec["ceiling"])
+        if rec["status"] in ("untaught", "plateaued"):
+            rec["status"] = "active"
+        rec["fails"] = 0
         rec["interval"] = 1
         rec["last"], rec["next"] = iso, (today + dt.timedelta(1)).isoformat()
 
-    elif result == "pass":
-        prev = rec["interval"]
+    elif result in ("pass", "rubric-pass"):
+        # a pass is evidence of contact, whatever the row claimed before
+        if rec["status"] in ("untaught", "plateaued"):
+            rec["status"] = "active"
         rec["fails"] = 0
-        if rec["mastery"] == "exposed":
-            rec["mastery"] = _band_cap("retrievable", rec["ceiling"])
-        if rec["reprobe"] == "pending":
-            rec["reprobe"] = "done"
-            if meta["solid-pending"] == rec["id"]:
-                meta["solid-pending"] = "none"
-        # solid needs BOTH the delayed re-probe AND surviving the 35-day
-        # interval (successive relearning: one delayed pass isn't storage)
-        if rec["reprobe"] == "done" and prev >= 35:
-            rec["mastery"] = _band_cap("solid", rec["ceiling"])
-        rec["interval"] = ladder_up(prev)
+        rec["interval"] = ladder_up(rec["interval"])
         rec["last"], rec["next"] = iso, \
             (today + dt.timedelta(rec["interval"])).isoformat()
 
-    elif result == "fail":
+    elif result in ("fail", "rubric-fail"):
+        if rec["status"] == "untaught":
+            rec["status"] = "active"
         # step back one rung, never to zero: a lapse is not amnesia
         rec["interval"] = ladder_down(rec["interval"])
         rec["fails"] += 1
@@ -352,18 +485,17 @@ def _apply_grade(rec, grade, meta, today: dt.date, next_unit_needs):
             rec["status"] = "plateaued"
         rec["last"], rec["next"] = iso, \
             (today + dt.timedelta(rec["interval"])).isoformat()
-
-    elif result == "rubric-pass":
-        # teach-back success: schedule the delayed re-probe for tomorrow
-        meta["solid-pending"] = rec["id"]
-        rec["reprobe"] = "pending"
-        rec["last"], rec["next"] = iso, (today + dt.timedelta(1)).isoformat()
-
-    elif result == "rubric-fail":
-        rec["last"] = iso
         # only a failed hard prerequisite of the NEXT unit triggers repair
-        if rec["id"] in next_unit_needs:
+        if result == "rubric-fail" and rec["id"] in next_unit_needs \
+                and not was_repair:
             meta["repair-pending"] = rec["id"]
+            return
+
+    if was_repair:
+        # the repair session happened; the course moves on either way
+        meta["repair-pending"] = "none"
+        if result in ("fail", "rubric-fail"):
+            rec["status"] = "plateaued"
 
 
 def _next_unit_prereq_ids(course: Path):
@@ -381,7 +513,7 @@ def _next_unit_prereq_ids(course: Path):
 
 def cmd_commit_grades(course: Path, logfile: Path):
     course = Path(course)
-    session, grades = parse_log_grades(Path(logfile).read_text())
+    session, grades = parse_log_grades(_read(Path(logfile)))
     meta, records = load_state(course)
     if session in meta["committed-sessions"]:
         return "noop"  # replay after crash/redo: exact-string guard
@@ -403,25 +535,26 @@ def cmd_commit_grades(course: Path, logfile: Path):
 
 # ------------------------------------------------------------------ queue
 
-def build_queue(course: Path):
+def build_queue(course: Path, cap=QUEUE_CAP, terminal=False):
     course = Path(course)
     meta, records = load_state(course)
     today = _today(course).isoformat()
-    due = [r for r in records.values()
-           if r["status"] == "active" and r["verify"] != "none"
-           and r["next"] not in ("-", "") and r["next"] <= today]
-    pending = meta["solid-pending"]
-    head = []
-    if pending != "none" and pending in records:
-        head = [pending]  # the promotion re-probe rides OUTSIDE the cap
-        due = [r for r in due if r["id"] != pending]
-    due.sort(key=lambda r: r["next"])
-    return head + [r["id"] for r in due[:QUEUE_CAP]]
+    live = [r for r in records.values()
+            if r["status"] == "active" and r["verify"] != "none"]
+    if terminal:
+        # consolidation: ignore due dates, surface the least-evidenced first
+        live.sort(key=lambda r: (-r["fails"], r["interval"]))
+        return [r["id"] for r in live[:cap]]
+    due = [r for r in live if r["next"] not in ("-", "") and r["next"] <= today]
+    # oldest-first, but never let the backlog crowd out the material the
+    # current unit is actually about
+    due.sort(key=lambda r: (r["interval"], r["next"]))
+    return [r["id"] for r in due[:cap]]
 
 
-def cmd_queue(course: Path):
+def cmd_queue(course: Path, cap=QUEUE_CAP, terminal=False):
     course = Path(course)
-    ids = build_queue(course)
+    ids = build_queue(course, cap=cap, terminal=terminal)
     meta, records = load_state(course)
     today = _today(course).isoformat()
     total_due = sum(1 for r in records.values()
@@ -431,29 +564,33 @@ def cmd_queue(course: Path):
     lines = ["<!-- GENERATED by schedule.py — never hand-edit -->",
              f"<!-- date: {today} | rolled-forward: {rolled} -->"]
     lines += [f"- {i}" for i in ids]
-    (course / "review-queue.md").write_text("\n".join(lines) + "\n")
+    _write(course / "review-queue.md", "\n".join(lines) + "\n")
     return ids
 
 
 # ------------------------------------------------- seed / verify / prune
 
-def cmd_seed(course: Path, cid: str, band: str):
+# placement evidence must reach the SCHEDULE, not just a display band
+SEED_INTERVAL = {"none": 1, "exposed": 1, "retrievable": 7}
+
+
+def cmd_seed(course: Path, cid: str, evidence: str):
     course = Path(course)
-    if band not in BANDS:
-        raise FormatError(f"unknown band {band!r}")
+    if evidence not in SEED_INTERVAL:
+        raise FormatError(f"unknown evidence level {evidence!r} "
+                          f"(one of {sorted(SEED_INTERVAL)})")
     concepts = parse_map(course)
     if cid not in concepts:
         raise IntegrityError(f"seed: {cid!r} is not in the domain map")
     meta, records = load_state(course)
     today = _today(course)
-    c = concepts[cid]
+    iv = SEED_INTERVAL[evidence]
     records[cid] = {   # upsert: rerunning session 1 cannot duplicate rows
-        "id": cid, "verify": c["verify"], "ceiling": c["ceiling"],
-        "mastery": _band_cap(band, c["ceiling"]),
-        "status": "active" if band != "none" else "untaught",
+        "id": cid, "verify": concepts[cid]["verify"],
+        "status": "active" if evidence != "none" else "untaught",
         "last": today.isoformat(),
-        "next": (today + dt.timedelta(1)).isoformat(),
-        "interval": 1, "fails": 0, "reprobe": "-", "note": "seeded",
+        "next": (today + dt.timedelta(iv)).isoformat(),
+        "interval": iv, "fails": 0, "note": f"placement: {evidence}",
     }
     save_state(course, meta, records)
 
@@ -466,16 +603,27 @@ def cmd_set_verify(course: Path, cid: str, mech: str):
     if cid not in records:
         raise IntegrityError(f"set-verify: unknown concept {cid!r}")
     records[cid]["verify"] = mech
+    if mech == "none":
+        # adjudicated away: stop reporting it as stuck
+        records[cid]["status"] = "dropped"
     save_state(course, meta, records)
 
 
 def cmd_reprune(course: Path, drop):
     """Shrink the course coherently: state + plan in one operation.
-    Refuses to orphan a kept concept's prerequisite."""
+    Refuses to orphan a kept concept's prerequisite, or to drop a
+    threshold concept."""
     course = Path(course)
     concepts = parse_map(course)
     meta, records = load_state(course)
     dropset = set(drop)
+    for cid in dropset:
+        if cid not in records:
+            raise IntegrityError(f"reprune: unknown concept {cid!r}")
+        if concepts.get(cid, {}).get("threshold") == "yes":
+            raise IntegrityError(
+                f"cannot drop {cid!r}: it is a threshold concept — the "
+                "course does not mean the same thing without it")
     kept = {cid for cid, r in records.items()
             if cid not in dropset and r["status"] != "dropped"}
     for cid in kept:
@@ -485,39 +633,37 @@ def cmd_reprune(course: Path, drop):
                 f"cannot drop {sorted(broken)}: prerequisite(s) of kept "
                 f"concept {cid!r}")
     for cid in dropset:
-        if cid not in records:
-            raise IntegrityError(f"reprune: unknown concept {cid!r}")
         records[cid]["status"] = "dropped"
+    if meta["repair-pending"] in dropset:
+        meta["repair-pending"] = "none"
     save_state(course, meta, records)
     # plan.md: remove dropped ids from concepts/keystones lists in place
-    plan_path = course / "plan.md"
-    text = plan_path.read_text()
+    path = course / "plan.md"
+    text = _read(path)
 
     def strip_ids(m):
         ids = [p for p in re.split(r"[,\s]+", m.group(2).strip("[]"))
                if p and p not in dropset]
         return f"{m.group(1)}: [{', '.join(ids)}]"
-    text = re.sub(r"^(concepts|keystones):\s*(\[[^\]]*\])",
+    text = re.sub(r"^(concepts|keystones):\s*(\[?[^\]\n]*\]?)",
                   strip_ids, text, flags=re.M)
-    tmp = plan_path.with_suffix(".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, plan_path)
+    _write(path, text)
 
 
 # ----------------------------------------------------------------- assets
 
-MIN_INTERLEAVED = 3
+MIN_INTERLEAVED = 2
+MID_RE = re.compile(r"^M\d+$")
 
 
 def parse_assets(text: str):
     """Parse an assets/unit-NN.md file into checkable structure.
 
-    Grammar (see templates/assets-unit.md):
+    Grammar (see templates/assets-unit.md). Indented continuation lines
+    append to the previous item, so long values may wrap:
       ## concept: <id>
-      - quiz: <question> | a: <answer> | distractor: <Mid>
+      - quiz: <question> | a: <answer> | distractor: <Mid or free text>
       - example: worked | <text>
-      - example: faded | <text>
-      - self-explain: <prompt>
       - apply: <prompt>
       ## rubric: <keystone-id>
       - claim: <required claim>
@@ -527,8 +673,12 @@ def parse_assets(text: str):
     """
     out = {"concepts": {}, "rubrics": {}, "interleaved": []}
     section = kind = None
-    for raw in text.splitlines():
+    items = []          # flat list of (dict, key) for continuation appends
+    last = None
+    for raw in _strip_comments(text).splitlines():
         line = raw.strip()
+        if not line:
+            continue
         if line.startswith("## "):
             head = line[3:].strip()
             key, _, val = head.partition(":")
@@ -536,20 +686,26 @@ def parse_assets(text: str):
             if key == "concept":
                 section, kind = val, "concept"
                 out["concepts"].setdefault(
-                    val, {"quiz": [], "apply": [], "example": {},
-                          "self-explain": []})
+                    val, {"quiz": [], "apply": [], "example": {}})
             elif key == "rubric":
                 section, kind = val, "rubric"
                 out["rubrics"].setdefault(val, {"claims": [], "avoid": []})
             elif key == "interleaved":
                 section, kind = None, "interleaved"
             else:
-                raise FormatError(f"unknown asset section: {head!r}")
+                raise FormatError(
+                    f"unknown asset section: {head!r} "
+                    "(sections are 'concept:', 'rubric:', 'interleaved')")
+            last = None
             continue
         if not line.startswith("- "):
+            if last is not None and raw.startswith((" ", "\t")):
+                holder, hkey = last
+                holder[hkey] = (holder[hkey] + " " + line).strip()
             continue
         field, _, rest = line[2:].partition(":")
         field, rest = field.strip(), rest.strip()
+        last = None
         if kind == "concept":
             c = out["concepts"][section]
             if field == "quiz":
@@ -558,71 +714,113 @@ def parse_assets(text: str):
                     raise FormatError(
                         f"quiz item for {section!r} has no ' | a:' answer")
                 ans, _, dis = tail.partition(" | distractor:")
-                c["quiz"].append({"q": q.strip(), "a": ans.strip(),
-                                  "distractor": dis.strip() or None})
+                item = {"q": q.strip(), "a": ans.strip(),
+                        "distractor": dis.strip() or None}
+                c["quiz"].append(item)
+                last = (item, "a")
             elif field == "example":
                 variant, _, body = rest.partition(" | ")
                 c["example"][variant.strip()] = body.strip()
-            elif field in ("apply", "self-explain"):
-                c[field].append(rest)
+                last = (c["example"], variant.strip())
+            elif field == "apply":
+                c["apply"].append(rest)
+                last = (c["apply"], len(c["apply"]) - 1)
+            else:
+                # a typo'd field would otherwise vanish without a trace
+                raise FormatError(
+                    f"unknown field {field!r} under '## concept: {section}' "
+                    "(quiz, example, apply)")
         elif kind == "rubric":
             r = out["rubrics"][section]
             if field == "claim":
                 r["claims"].append(rest)
+                last = (r["claims"], len(r["claims"]) - 1)
             elif field == "avoid":
                 r["avoid"].append(rest)
-        elif kind == "interleaved" and field == "problem":
+            else:
+                raise FormatError(
+                    f"unknown field {field!r} under '## rubric: {section}' "
+                    "(claim, avoid)")
+        elif kind == "interleaved":
+            if field != "problem":
+                raise FormatError(
+                    f"unknown field {field!r} under '## interleaved' "
+                    "(problem)")
             body, _, cons = rest.partition(" | concepts:")
-            out["interleaved"].append(
-                {"problem": body.strip(),
-                 "concepts": [c for c in re.split(r"[,\s]+", cons) if c]})
+            item = {"problem": body.strip(),
+                    "concepts": [c for c in re.split(r"[,\s]+", cons) if c]}
+            out["interleaved"].append(item)
+            last = (item, "problem")
     return out
 
 
-def validate_assets(unit, assets, concepts, where=""):
-    """Structural quality gate: the round-2 panel's 'check validates
-    existence, not quality' hole. Misconception ids are machine-form in
-    the map, so distractor/avoid coverage is checkable, not a vibe."""
+def validate_assets(unit, assets, concepts, where="", first_unit=False):
+    """Quality gate. Every rule here is BOTH checkable and non-negotiable:
+    it rejects empty and placeholder work, and it never demands a shape
+    that good teaching material cannot take."""
     errs = []
+
+    def blank(s):
+        return not s or not s.strip() or s.strip().lower() in (
+            "todo", "tbd", "...", "-", "n/a", "xxx", "placeholder")
+
     for cid in unit["concepts"]:
         spec = concepts.get(cid)
         if not spec:
             continue
         got = assets["concepts"].get(cid)
         if not got:
-            errs.append(f"no asset block for concept {cid!r}")
+            errs.append(f"no '## concept: {cid}' block")
             continue
         if spec["verify"] == "quiz":
-            if not got["quiz"]:
-                errs.append(f"{cid}: no quiz item with an answer key")
+            live = [q for q in got["quiz"]
+                    if not blank(q["q"]) and not blank(q["a"])]
+            if not live:
+                errs.append(f"{cid}: needs a quiz item with a real question "
+                            "and a real answer key")
             for item in got["quiz"]:
                 d = item["distractor"]
-                if d and d not in spec["misconceptions"]:
+                # an Mn-shaped distractor must resolve; free text is fine
+                if d and MID_RE.match(d) and d not in spec["misconceptions"]:
                     errs.append(
-                        f"{cid}: distractor {d!r} is not a misconception "
-                        f"id in the map ({spec['misconceptions']})")
-            if "worked" not in got["example"]:
-                errs.append(f"{cid}: no worked example")
-        if spec["verify"] == "use" and not got["apply"]:
-            errs.append(f"{cid}: verify:use needs >=1 'apply:' prompt")
+                        f"{cid}: distractor {d!r} is not a misconception id "
+                        f"in the map ({spec['misconceptions'] or 'none'})")
+        if spec["verify"] == "use":
+            if not [a for a in got["apply"] if not blank(a)]:
+                errs.append(f"{cid}: verify:use needs a real 'apply:' prompt")
+
     for key in unit["keystones"]:
         rub = assets["rubrics"].get(key)
         if not rub:
-            errs.append(f"keystone {key!r} has no rubric block")
+            errs.append(f"keystone {key!r} has no '## rubric: {key}' block")
             continue
-        if not rub["claims"]:
-            errs.append(f"rubric {key!r}: no required 'claim:' lines")
-        if not rub["avoid"]:
-            errs.append(f"rubric {key!r}: no 'avoid:' misconception lines")
+        if not [c for c in rub["claims"] if not blank(c)]:
+            errs.append(f"rubric {key!r}: needs a real 'claim:' line")
+        known = concepts.get(key, {}).get("misconceptions", [])
         for mid in rub["avoid"]:
-            if mid not in concepts.get(key, {}).get("misconceptions", []):
+            if MID_RE.match(mid) and mid not in known:
                 errs.append(
-                    f"rubric {key!r}: avoid {mid!r} not a map misconception")
-    if len(assets["interleaved"]) < MIN_INTERLEAVED:
-        errs.append(f"needs >={MIN_INTERLEAVED} interleaved problems, "
-                    f"found {len(assets['interleaved'])}")
+                    f"rubric {key!r}: avoid {mid!r} not a map misconception "
+                    f"({known or 'none declared'})")
+
+    need = 1 if first_unit else MIN_INTERLEAVED
+    live = [p for p in assets["interleaved"]
+            if not blank(p["problem"]) and p["concepts"]]
+    if len(live) < need:
+        errs.append(
+            f"needs >={need} interleaved problem(s) with real text and a "
+            f"'| concepts:' list, found {len(live)}")
+    for p in live:
+        unknown = [c for c in p["concepts"] if c not in concepts]
+        if unknown:
+            errs.append(f"interleaved problem names unknown concept(s) "
+                        f"{unknown}")
     if errs:
         raise IntegrityError(f"{where}: " + "; ".join(errs))
+
+
+def assets_path(course: Path, num: int) -> Path:
+    return Path(course) / "assets" / f"unit-{num:02d}.md"
 
 
 # ------------------------------------------------------------------ check
@@ -630,8 +828,8 @@ def validate_assets(unit, assets, concepts, where=""):
 def cmd_check(course: Path):
     course = Path(course)
     concepts = parse_map(course)          # errata already merged
-    meta, records = load_state(course)    # FormatError on dup/multiline
-    _, units = parse_plan(course)
+    meta, records = load_state(course)    # values validated on load
+    header, units = parse_plan(course)
 
     # prereq edges must point at real concepts, and the graph must be a DAG
     for cid, c in concepts.items():
@@ -653,7 +851,7 @@ def cmd_check(course: Path):
     for cid in concepts:
         visit(cid, [])
 
-    # cross-file id agreement (asymmetric: dropped may vanish from plan)
+    # cross-file id agreement
     missing = set(concepts) - set(records)
     if missing:
         raise IntegrityError(
@@ -662,53 +860,149 @@ def cmd_check(course: Path):
     if orphans:
         raise IntegrityError(
             f"knowledge-state rows not in map: {sorted(orphans)}")
+    for cid, rec in records.items():
+        # set-verify none is the one legal divergence; it drops the concept
+        if rec["verify"] != concepts[cid]["verify"] \
+                and rec["status"] != "dropped":
+            raise IntegrityError(
+                f"{cid}: verify disagrees with the map "
+                f"({rec['verify']!r} vs {concepts[cid]['verify']!r})")
     for unit in units:
         for cid in unit["concepts"] + unit["keystones"]:
             if cid not in concepts:
                 raise IntegrityError(
-                    f"plan references unknown concept {cid!r} "
-                    f"in {unit['title']!r}")
+                    f"plan references unknown concept {cid!r} in unit "
+                    f"{unit['num']}")
+        for cid in unit["keystones"]:
+            if cid not in unit["concepts"]:
+                raise IntegrityError(
+                    f"unit {unit['num']}: keystone {cid!r} is not one of "
+                    "the unit's own concepts")
+
+    # the course must FIT: one session per concept, plus a teach-back,
+    # plus room at the end to consolidate
+    size = course_size(header)
+    for unit in units:
+        floor = len(unit["concepts"]) + 1
+        if unit["sessions"] < floor:
+            raise IntegrityError(
+                f"unit {unit['num']} has {len(unit['concepts'])} concepts "
+                f"but only {unit['sessions']} sessions — needs >={floor} "
+                "(one per concept at <=1 new concept/session, plus the "
+                "teach-back)")
+    total = sum(u["sessions"] for u in units)
+    if total > size - MIN_CONSOLIDATION:
+        raise IntegrityError(
+            f"units total {total} sessions of a {size}-session course; "
+            f"leave >={MIN_CONSOLIDATION} at the end to consolidate "
+            f"(max {size - MIN_CONSOLIDATION})")
 
     # assets: a started unit must HAVE them; any that exist must be good
-    for i, unit in enumerate(units, start=1):
-        path = course / "assets" / f"unit-{i:02d}.md"
+    for unit in units:
+        path = assets_path(course, unit["num"])
         if not path.exists():
             if unit["status"] != "untouched":
                 raise IntegrityError(
-                    f"unit {i} is {unit['status']!r} but "
-                    f"assets/unit-{i:02d}.md is missing")
+                    f"unit {unit['num']} is {unit['status']!r} but "
+                    f"{path.name} is missing")
             continue
-        validate_assets(unit, parse_assets(path.read_text()), concepts,
-                        where=f"assets/unit-{i:02d}.md")
+        validate_assets(unit, parse_assets(_read(path)), concepts,
+                        where=path.name, first_unit=(unit["num"] == units[0]["num"]))
     return "ok"
 
 
-# ----------------------------------------------------------------- report
+# --------------------------------------------------------------- dispatch
+
+def dispatch(course: Path):
+    """Decide the session type. Deterministic from plan.md + state, so two
+    agents never disagree about what session this is."""
+    course = Path(course)
+    header, units = parse_plan(course)
+    meta, records = load_state(course)
+    idx, size = session_index(header), course_size(header)
+    out = {"index": idx, "size": size, "unit": None, "author": None,
+           "cap": TEACHING_CAP, "terminal": False}
+
+    if header["course-status"] != "active":
+        out["type"] = "lifecycle"
+        out["why"] = f"course-status is {header['course-status']}"
+        return out
+    if idx > size:
+        out["type"] = "graduation"
+        out["why"] = "the session counter is exhausted"
+        return out
+    if idx == 1:
+        out["type"] = "placement"
+        out["why"] = "first session"
+        return out
+
+    last = header["last-attended"]
+    if last != "-":
+        gap = (_today(course) - dt.date.fromisoformat(last)).days
+        if gap >= DORMANT_DAYS:
+            out["type"] = "dormant"
+            out["why"] = f"{gap} days since the last session"
+            return out
+    if header["re-entry-pending"] == "yes":
+        out["type"], out["cap"] = "re-entry", QUEUE_CAP
+        out["why"] = "returning after a gap"
+        return out
+    if meta["repair-pending"] != "none":
+        out["type"] = "repair"
+        out["why"] = f"repair owed on {meta['repair-pending']}"
+        out["concept"] = meta["repair-pending"]
+        return out
+
+    here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
+    if here is None:
+        out["type"], out["cap"], out["terminal"] = "consolidation", QUEUE_CAP, True
+        out["why"] = "every unit is taught; these sessions are for mixing"
+        return out
+
+    out["unit"] = here
+    if not assets_path(course, here["num"]).exists():
+        out["author"] = assets_path(course, here["num"]).name
+    elif idx == here["end"]:
+        nxt = next((u for u in units if u["num"] > here["num"]), None)
+        if nxt and not assets_path(course, nxt["num"]).exists():
+            out["author"] = assets_path(course, nxt["num"]).name
+    if idx == here["end"]:
+        out["type"], out["cap"] = "teach-back", QUEUE_CAP
+        out["why"] = f"last session of unit {here['num']}"
+    else:
+        out["type"] = "standard"
+        out["why"] = f"session {idx - here['start'] + 1} of unit {here['num']}"
+    return out
+
+
+# ------------------------------------------------------------------ report
 
 def cmd_report(course: Path):
     course = Path(course)
     meta, records = load_state(course)
+    header, units = parse_plan(course)
     today = _today(course).isoformat()
-    active = [r for r in records.values() if r["status"] == "active"]
-    due = [r["id"] for r in active
-           if r["verify"] != "none" and r["next"] not in ("-", "")
-           and r["next"] <= today]
-    plateaued = [r["id"] for r in records.values()
-                 if r["status"] == "plateaued"]
-    bands = {b: sum(1 for r in records.values() if r["mastery"] == b)
-             for b in BANDS}
+    live = [r for r in records.values() if r["status"] != "dropped"]
+    due = [r["id"] for r in live
+           if r["status"] == "active" and r["verify"] != "none"
+           and r["next"] not in ("-", "") and r["next"] <= today]
+    stuck = [r["id"] for r in live if r["status"] == "plateaued"]
+    counts = {}
+    for r in live:
+        counts[band(r)] = counts.get(band(r), 0) + 1
     lines = [
-        f"concepts: {len(records)} "
-        + " ".join(f"{b}={n}" for b, n in bands.items()),
+        f"session {header['next-session']} | cadence {header['cadence']}/wk "
+        f"| attended {header['sessions-done']} | last {header['last-attended']}",
+        "concepts: " + " ".join(f"{b}={n}" for b, n in sorted(counts.items())),
         f"due today: {len(due)} ({', '.join(due) or '-'})",
-        f"plateaued: {len(plateaued)} ({', '.join(plateaued) or '-'})",
-        f"solid-pending: {meta['solid-pending']}"
-        f" | repair-pending: {meta['repair-pending']}",
+        f"stuck (needs your call): {len(stuck)} ({', '.join(stuck) or '-'})",
+        f"repair-pending: {meta['repair-pending']}",
+        "units: " + ", ".join(f"{u['num']}:{u['status']}" for u in units),
     ]
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------- recover
+# ---------------------------------------------------------------- git
 
 def _git(course, *args, check=True):
     return subprocess.run(
@@ -717,60 +1011,188 @@ def _git(course, *args, check=True):
         cwd=course, check=check, capture_output=True, text=True)
 
 
-def _dirty(course) -> bool:
-    out = _git(course, "status", "--porcelain").stdout
-    return bool(out.strip())
+def _is_repo(course) -> bool:
+    return _git(course, "rev-parse", "--git-dir", check=False).returncode == 0
 
+
+def _ensure_repo(course: Path) -> bool:
+    """A course directory must be its own history. Returns True if created."""
+    if _is_repo(course):
+        return False
+    _git(course, "init", "-q")
+    gi = Path(course) / ".gitignore"
+    if not gi.exists():
+        _write(gi, f"{SENTINEL}\n*.tmp\n__pycache__/\n")
+    _git(course, "add", "-A", "--", ".")
+    _git(course, "commit", "-q", "-m", "elenchus: course directory")
+    return True
+
+
+def _dirty(course) -> bool:
+    r = _git(course, "status", "--porcelain", "--", ".", check=False)
+    return bool(r.stdout.strip())
+
+
+def _commit(course, message):
+    """Scoped to the course subtree, so a course nested inside a larger
+    repo never sweeps up its parent's unrelated work."""
+    _git(course, "add", "-A", "--", ".")
+    if _dirty(course):
+        _git(course, "commit", "-q", "-m", message, "--", ".")
+        return True
+    return False
+
+
+# ---------------------------------------------------------------- recover
 
 def cmd_recover(course: Path):
     """Three-way recovery, decidable from structure alone.
 
     fresh sentinel        -> a session is LIVE: lock, touch nothing
     stale + grades log    -> close finished but never committed: replay
-                             (commit-grades is idempotent) and commit
-    stale + no grades log -> genuine mid-flight crash: reset hard, clean
+    stale + no grades log -> genuine mid-flight crash: discard the debris
+
+    Age comes from the sentinel's own mtime, so no clock, timezone, or
+    agent-authored timestamp can enter the decision.
     """
     course = Path(course)
+    if _ensure_repo(course):
+        return "initialized"
     sentinel = course / SENTINEL
     if not sentinel.exists():
-        if _dirty(course):
-            cmd_check(course)  # validate BEFORE blessing dirt into history
-            _git(course, "add", "-A")
-            _git(course, "commit", "-m", "recover: commit-as-is")
-            return "committed"
         return "ok"
+
+    age = _now() - dt.datetime.fromtimestamp(sentinel.stat().st_mtime)
+    if age < dt.timedelta(hours=STALE_HOURS):
+        return "locked"  # NEVER reset a signature a live session presents
 
     fields = dict(
         line.partition(":")[::2] for line in
-        sentinel.read_text().splitlines() if ":" in line)
+        _read(sentinel).splitlines() if ":" in line)
     session = fields.get("session", "").strip()
-    started = fields.get("started", "").strip()
-    try:
-        age = _now(course) - dt.datetime.fromisoformat(started)
-    except ValueError:
-        age = dt.timedelta(hours=STALE_HOURS + 1)  # unreadable = stale
-    if age < dt.timedelta(hours=STALE_HOURS):
-        return "locked"  # NEVER reset a signature a live session presents
+    if not valid_session_token(session):
+        # we do not know what this session was; refuse to destroy anything
+        return "locked"
 
     logs = sorted((course / "log").glob(f"*-{session}.md"))
     if logs:
         try:
-            parse_log_grades(logs[-1].read_text())
             cmd_commit_grades(course, logs[-1])  # no-op if already applied
             sentinel.unlink()
-            _git(course, "add", "-A")
-            if _dirty(course):
-                _git(course, "commit", "-m",
-                     f"recover: replayed session {session}")
+            _commit(course, f"recover: replayed session {session}")
             return "replayed"
-        except FormatError:
-            pass  # unparseable draft: treat as mid-flight crash
+        except (FormatError, IntegrityError):
+            pass  # unusable draft: treat as mid-flight crash
 
-    _git(course, "reset", "--hard", "-q")
-    _git(course, "clean", "-fdq")
+    # scoped to the course subtree — never `reset --hard` a parent repo
+    _git(course, "checkout", "-q", "--", ".")
+    _git(course, "clean", "-fdq", "--", ".")
     if sentinel.exists():
         sentinel.unlink()
     return "reset"
+
+
+# ------------------------------------------------------------ begin / close
+
+def _next_token(idx: int, kind: str, committed) -> str:
+    if kind != "repair":
+        return str(idx)
+    for n in range(1, 50):
+        tok = f"{idx}r" if n == 1 else f"{idx}r{n}"
+        if tok not in committed:
+            return tok
+    raise IntegrityError(f"session {idx} has been repaired 49 times")
+
+
+def cmd_begin(course: Path):
+    """Everything before the first word to the user, in one call."""
+    course = Path(course)
+    state = cmd_recover(course)
+    if state == "locked":
+        raise IntegrityError(
+            "a session is already live (.session-inprogress is fresh) — "
+            "send nothing and stop")
+    cmd_check(course)
+    d = dispatch(course)
+    meta, _ = load_state(course)
+    token = _next_token(d["index"], d["type"], meta["committed-sessions"])
+
+    sentinel = course / SENTINEL
+    try:
+        fd = os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise IntegrityError("a session is already live — send nothing")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(f"session: {token}\n")
+
+    ids = cmd_queue(course, cap=d["cap"], terminal=d["terminal"])
+    _, records = load_state(course)
+    lines = [f"recover: {state}",
+             f"session: {token} of {d['size']}",
+             f"type: {d['type']}  ({d['why']})"]
+    if d.get("concept"):
+        lines.append(f"concept: {d['concept']}")
+    if d["unit"]:
+        u = d["unit"]
+        lines.append(f"unit: {u['num']} — {u['title']}")
+        lines.append(f"assets: assets/unit-{u['num']:02d}.md")
+        untaught = [c for c in u["concepts"]
+                    if records[c]["status"] == "untaught"]
+        lines.append(f"untaught here: {', '.join(untaught) or '-'}")
+        if u["artifact"] and u["artifact"] != "none":
+            lines.append(f"artifact-milestone: {u['artifact']}")
+    lines.append(f"quiz these ({len(ids)}): {', '.join(ids) or '-'}")
+    if d["author"]:
+        lines.append(f"author-after-close: {d['author']}")
+    return "\n".join(lines)
+
+
+def cmd_close(course: Path, logfile: Path):
+    """Everything after the last word to the user, in one call: grades,
+    plan.md, git, unlock. All the arithmetic the agent must not do."""
+    course = Path(course)
+    logfile = Path(logfile)
+    if not logfile.is_absolute():
+        logfile = course / logfile if not logfile.exists() else logfile
+    session, _ = parse_log_grades(_read(logfile))
+
+    sentinel = course / SENTINEL
+    if sentinel.exists():
+        fields = dict(line.partition(":")[::2] for line in
+                      _read(sentinel).splitlines() if ":" in line)
+        held = fields.get("session", "").strip()
+        if held and held != session:
+            raise IntegrityError(
+                f"the live session is {held!r} but this log says {session!r} "
+                "— refusing to close someone else's session")
+
+    applied = cmd_commit_grades(course, logfile)
+    header, units = parse_plan(course)
+    idx = session_index(header)
+    today = _today(course)
+
+    updates = {"sessions-done": int(header["sessions-done"]) + 1,
+               "last-attended": today.isoformat(),
+               "re-entry-pending": "no"}
+    # a repair session carries a fractional token; it must not move the counter
+    advanced = not session.rstrip("0123456789").endswith("r")
+    if advanced:
+        updates["next-session"] = f"{idx + 1}/{course_size(header)}"
+    write_plan_header(course, updates)
+
+    here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
+    if here and advanced:
+        write_unit_status(course, here["num"],
+                          "taught" if idx >= here["end"] else "in-progress")
+
+    cmd_queue(course)
+    _commit(course, f"session {session}")
+    if sentinel.exists():
+        sentinel.unlink()
+        _commit(course, f"session {session}: unlock")
+    nxt = session_index(parse_plan(course)[0])
+    return (f"closed session {session} ({applied})\n"
+            f"next: {nxt}/{course_size(header)}")
 
 
 # -------------------------------------------------------------------- cli
@@ -779,23 +1201,28 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="schedule.py", description=__doc__)
     ap.add_argument("--course", default=".", help="course directory")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("check")
-    sub.add_parser("queue")
-    sub.add_parser("report")
-    sub.add_parser("recover")
-    p = sub.add_parser("seed")
-    p.add_argument("id"), p.add_argument("band", choices=BANDS)
+    for verb in ("begin", "check", "queue", "report", "recover"):
+        sub.add_parser(verb)
+    p = sub.add_parser("close")
+    p.add_argument("logfile")
     p = sub.add_parser("commit-grades")
     p.add_argument("logfile")
+    p = sub.add_parser("seed")
+    p.add_argument("id")
+    p.add_argument("evidence", choices=sorted(SEED_INTERVAL))
     p = sub.add_parser("set-verify")
-    p.add_argument("id"), p.add_argument("mech", choices=sorted(VERIFIES))
+    p.add_argument("id")
+    p.add_argument("mech", choices=sorted(VERIFIES))
     p = sub.add_parser("reprune")
-    p.add_argument("--drop", required=True,
-                   help="comma-separated concept ids")
+    p.add_argument("ids", help="comma-separated concept ids")
     a = ap.parse_args(argv)
     course = Path(a.course)
     try:
-        if a.cmd == "check":
+        if a.cmd == "begin":
+            print(cmd_begin(course))
+        elif a.cmd == "close":
+            print(cmd_close(course, a.logfile))
+        elif a.cmd == "check":
             print(cmd_check(course))
         elif a.cmd == "queue":
             print("\n".join(cmd_queue(course)))
@@ -804,15 +1231,18 @@ def main(argv=None):
         elif a.cmd == "recover":
             print(cmd_recover(course))
         elif a.cmd == "seed":
-            cmd_seed(course, a.id, a.band)
+            cmd_seed(course, a.id, a.evidence)
         elif a.cmd == "commit-grades":
             print(cmd_commit_grades(course, Path(a.logfile)))
         elif a.cmd == "set-verify":
             cmd_set_verify(course, a.id, a.mech)
         elif a.cmd == "reprune":
-            cmd_reprune(course, [s for s in a.drop.split(",") if s])
+            cmd_reprune(course, [s for s in a.ids.split(",") if s])
     except (FormatError, IntegrityError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:                      # never hand back a traceback
+        print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         sys.exit(2)
 
 

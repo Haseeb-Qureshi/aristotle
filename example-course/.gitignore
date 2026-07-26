@@ -1,0 +1,3 @@
+.session-inprogress
+*.tmp
+__pycache__/

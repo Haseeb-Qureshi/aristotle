@@ -1,664 +1,1258 @@
-"""Tests for scripts/schedule.py — the deterministic core of elenchus.
+"""Tests for the elenchus deterministic core.
 
-Written FIRST (TDD). These tests pin the interfaces that two critique
-panels found missing from the prose spec:
-  - the grade-line grammar and session-token grammar
-  - the mastery transition table
-  - queue semantics (cap, ordering, solid-pending prepend, exclusions)
-  - commit-grades atomicity, idempotency guard, loud unknown-id errors
-  - seed upsert idempotency, set-verify, reprune coherence
-  - check integrity (DAG + errata merge, cross-file id agreement)
-  - recover's three-way decision from structure alone
-
-Run: python3 -m unittest discover -s tests -v
+Every defect the round-3 review panel proved by execution has a test here.
+Tests assert BEHAVIOUR — what a course does — rather than parser internals:
+a change that alters what a learner experiences must fail something.
 """
 
-import importlib.util
+import datetime as dt
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-SPEC = importlib.util.spec_from_file_location(
-    "schedule", REPO / "scripts" / "schedule.py")
-schedule = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(schedule)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import schedule as S  # noqa: E402
 
-TODAY = "2026-07-20"  # all tests pin "today" via ELENCHUS_TODAY
-
+TODAY = "2026-07-21"
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "schedule.py"
 
 MAP_MD = """\
-# Domain Map
-topic: Testing
-terminal-task: verify the deterministic core
+topic: testing
+terminal-task: ship a course that survives a stranger
+research: no
 timezone: America/Los_Angeles
-sessions: 30
+sessions: 10
 
 ### alpha
-def: first concept
+def: the first thing
 prereqs: []
 verify: quiz
-ceiling: solid
-threshold: yes
+threshold: no
 misconceptions:
-  M1: confuses alpha with beta
+  M1: the common wrong model
+  M2: the other one
 
 ### beta
-def: second concept
+def: the second thing
 prereqs: [alpha]
 verify: quiz
-ceiling: solid
 threshold: no
 
 ### gamma
-def: judgment concept
-prereqs: []
+def: the third thing
+prereqs: [alpha]
 verify: use
-ceiling: retrievable
-threshold: no
+threshold: yes
+misconceptions:
+  M1: gamma's wrong model
 
 ### delta
-def: exposure only
-prereqs: []
-verify: none
-ceiling: retrievable
+def: the fourth thing
+prereqs: [beta]
+verify: quiz
 threshold: no
+
+## Controversies
+Some schools say prereqs: [nonsense] and verify: garbage.
+
+## Sources
+- something
+
+## Errata
 """
 
 PLAN_MD = """\
 course-status: active
-next-session: 3/30
+next-session: 2/10
 cadence: 3
-sessions-done: 2
+sessions-done: 1
+last-attended: 2026-07-20
+re-entry-pending: no
 
-## Unit 1: Why alpha?
-sessions: 2
+## Unit 1: Why does alpha matter?
+sessions: 3
 concepts: [alpha, beta]
 keystones: [alpha]
+artifact-milestone: none
 status: in-progress
 
-## Unit 2: Why gamma?
-sessions: 2
+## Unit 2: What is gamma for?
+sessions: 3
 concepts: [gamma, delta]
 keystones: [gamma]
+artifact-milestone: draft the thing
 status: untouched
 """
 
-STATE_HEADER = """\
+STATE_MD = """\
 <!-- elenchus:state
-committed-sessions:
-solid-pending: none
+committed-sessions: 1
 repair-pending: none
 -->
+<!-- a format comment in the body must be tolerated -->
+- id: alpha | verify: quiz | status: active | last: 2026-07-20 | \
+next: 2026-07-21 | interval: 1 | fails: 0 | note: taught session 1
+- id: beta | verify: quiz | status: untaught | last: - | next: - | \
+interval: 0 | fails: 0 | note:
+- id: gamma | verify: use | status: untaught | last: - | next: - | \
+interval: 0 | fails: 0 | note:
+- id: delta | verify: quiz | status: untaught | last: - | next: - | \
+interval: 0 | fails: 0 | note:
 """
 
-
-def rec_line(id, verify="quiz", ceiling="solid", mastery="exposed",
-             status="active", last="2026-07-19", next="2026-07-20",
-             interval=1, fails=0, reprobe="-", note=""):
-    return (f"- id: {id} | verify: {verify} | ceiling: {ceiling}"
-            f" | mastery: {mastery} | status: {status} | last: {last}"
-            f" | next: {next} | interval: {interval} | fails: {fails}"
-            f" | reprobe: {reprobe} | note: {note}")
-
-
-class CourseCase(unittest.TestCase):
-    """Base: builds a temp course dir and pins today's date."""
-
-    def setUp(self):
-        self.dir = Path(tempfile.mkdtemp(prefix="elenchus-test-"))
-        self.addCleanup(shutil.rmtree, self.dir, True)
-        os.environ["ELENCHUS_TODAY"] = TODAY
-        self.addCleanup(os.environ.pop, "ELENCHUS_TODAY", None)
-        (self.dir / "log").mkdir()
-        (self.dir / "assets").mkdir()
-        # a clean course has assets for its started unit (GOOD_ASSETS is
-        # module-level; resolved at call time, so definition order is fine)
-        (self.dir / "assets" / "unit-01.md").write_text(GOOD_ASSETS)
-        self.write("domain-map.md", MAP_MD)
-        self.write("plan.md", PLAN_MD)
-        self.write_state([
-            rec_line("alpha"),
-            rec_line("beta", mastery="none", status="untaught",
-                     last="-", next="-", interval=0),
-            rec_line("gamma", verify="use", ceiling="retrievable"),
-            rec_line("delta", verify="none", mastery="none",
-                     status="untaught", last="-", next="-", interval=0),
-        ])
-
-    def write(self, name, text):
-        (self.dir / name).write_text(text)
-
-    def write_state(self, lines, header=STATE_HEADER):
-        self.write("knowledge-state.md", header + "\n".join(lines) + "\n")
-
-    def state(self):
-        return schedule.load_state(self.dir)
-
-    def record(self, cid):
-        _, recs = self.state()
-        return recs[cid]
-
-
-# ---------------------------------------------------------------- parsing
-
-class TestStateParsing(CourseCase):
-
-    def test_roundtrip(self):
-        meta, recs = self.state()
-        self.assertEqual(set(recs), {"alpha", "beta", "gamma", "delta"})
-        self.assertEqual(recs["alpha"]["interval"], 1)
-        out = schedule.serialize_state(meta, recs)
-        meta2, recs2 = schedule.parse_state(out)
-        self.assertEqual(recs, recs2)
-        self.assertEqual(meta, meta2)
-
-    def test_duplicate_id_rejected(self):
-        self.write_state([rec_line("alpha"), rec_line("alpha")])
-        with self.assertRaises(schedule.FormatError):
-            self.state()
-
-    def test_label_not_positional(self):
-        # field order permuted -> still parses by label
-        line = ("- verify: quiz | id: omega | mastery: exposed"
-                " | ceiling: solid | status: active | last: 2026-07-19"
-                " | next: 2026-07-20 | fails: 0 | interval: 1"
-                " | reprobe: - | note: hi")
-        self.write_state([line])
-        self.assertEqual(self.record("omega")["note"], "hi")
-
-    def test_pipe_stripped_from_note_on_write(self):
-        meta, recs = self.state()
-        recs["alpha"]["note"] = "bad | pipe"
-        text = schedule.serialize_state(meta, recs)
-        _, recs2 = schedule.parse_state(text)
-        self.assertNotIn("|", recs2["alpha"]["note"])
-
-    def test_body_comments_are_tolerated(self):
-        # state files carry their own format documentation
-        self.write("knowledge-state.md",
-                   STATE_HEADER + "<!-- FORMAT: see templates -->\n"
-                   + rec_line("alpha") + "\n")
-        self.assertIn("alpha", self.state()[1])
-
-    def test_unknown_label_rejected(self):
-        self.write_state([rec_line("alpha") + " | bogus: x"])
-        with self.assertRaises(schedule.FormatError):
-            self.state()
-
-
-class TestGradeParsing(unittest.TestCase):
-
-    def parse(self, text):
-        return schedule.parse_log_grades(text)
-
-    def test_grammar(self):
-        tok, grades = self.parse(
-            "session: 17r\n"
-            "- grade: alpha | result: pass | note: clean\n"
-            "- grade: beta | result: taught | note: \n")
-        self.assertEqual(tok, "17r")
-        self.assertEqual(grades[0], {"id": "alpha", "result": "pass",
-                                     "note": "clean"})
-        self.assertEqual(grades[1]["result"], "taught")
-
-    def test_bad_grade_line_is_loud(self):
-        with self.assertRaises(schedule.FormatError):
-            self.parse("session: 3\n- grade: alpha passed fine\n")
-
-    def test_bad_result_token(self):
-        with self.assertRaises(schedule.FormatError):
-            self.parse("session: 3\n- grade: a | result: aced | note:\n")
-
-    def test_solid_is_not_writable(self):
-        # the agent may never hand the script a 'solid' grade
-        with self.assertRaises(schedule.FormatError):
-            self.parse("session: 3\n- grade: a | result: solid | note:\n")
-
-    def test_missing_session_line(self):
-        with self.assertRaises(schedule.FormatError):
-            self.parse("- grade: alpha | result: pass | note:\n")
-
-    def test_session_token_grammar(self):
-        for good in ("1", "17", "17r", "17r2"):
-            self.assertTrue(schedule.valid_session_token(good), good)
-        for bad in ("17x", "r17", "", "17.5", "17R"):
-            self.assertFalse(schedule.valid_session_token(bad), bad)
-
-
-# ------------------------------------------------------- transition table
-
-class TestTransitions(CourseCase):
-
-    def grades(self, *lines, session="3"):
-        body = f"session: {session}\n" + "\n".join(lines) + "\n"
-        p = self.dir / "log" / f"2026-07-20-{session}.md"
-        p.write_text(body)
-        return schedule.cmd_commit_grades(self.dir, p)
-
-    def test_ladder(self):
-        self.assertEqual(schedule.LADDER, [1, 3, 7, 16, 35, 90, 180])
-        self.assertEqual(schedule.ladder_up(1), 3)
-        self.assertEqual(schedule.ladder_up(180), 180)
-        self.assertEqual(schedule.ladder_down(35), 16)
-        self.assertEqual(schedule.ladder_down(1), 1)
-
-    def test_taught(self):
-        self.grades("- grade: beta | result: taught | note: intro")
-        r = self.record("beta")
-        self.assertEqual((r["status"], r["mastery"]), ("active", "exposed"))
-        self.assertEqual(r["interval"], 1)
-        self.assertEqual(r["next"], "2026-07-21")
-
-    def test_pass_promotes_exposed_to_retrievable(self):
-        self.grades("- grade: alpha | result: pass | note: ok")
-        r = self.record("alpha")
-        self.assertEqual(r["mastery"], "retrievable")
-        self.assertEqual(r["interval"], 3)
-        self.assertEqual(r["next"], "2026-07-23")
-        self.assertEqual(r["fails"], 0)
-
-    def test_fail_steps_back_one_never_to_zero(self):
-        self.write_state([rec_line("alpha", mastery="retrievable",
-                                   interval=16)])
-        self.grades("- grade: alpha | result: fail | note: hit M1")
-        r = self.record("alpha")
-        self.assertEqual(r["interval"], 7)   # 16 -> 7, not 1
-        self.assertEqual(r["fails"], 1)
-        self.assertEqual(r["mastery"], "retrievable")  # band survives a lapse
-
-    def test_three_fails_plateaus(self):
-        self.write_state([rec_line("alpha", fails=2)])
-        self.grades("- grade: alpha | result: fail | note: third miss")
-        self.assertEqual(self.record("alpha")["status"], "plateaued")
-
-    def test_pass_resets_fail_counter(self):
-        self.write_state([rec_line("alpha", fails=2)])
-        self.grades("- grade: alpha | result: pass | note: recovered")
-        self.assertEqual(self.record("alpha")["fails"], 0)
-
-    def test_ceiling_caps_band(self):
-        self.write_state([rec_line("gamma", verify="use",
-                                   ceiling="retrievable",
-                                   mastery="retrievable", interval=35,
-                                   reprobe="done")])
-        self.grades("- grade: gamma | result: pass | note: applied well")
-        self.assertEqual(self.record("gamma")["mastery"], "retrievable")
-
-    def test_rubric_pass_sets_solid_pending_and_due_tomorrow(self):
-        self.grades("- grade: alpha | result: rubric-pass | note: taught it")
-        meta, _ = self.state()
-        self.assertEqual(meta["solid-pending"], "alpha")
-        r = self.record("alpha")
-        self.assertEqual(r["reprobe"], "pending")
-        self.assertEqual(r["next"], "2026-07-21")
-
-    def test_reprobe_pass_completes_but_solid_needs_35(self):
-        self.write_state([rec_line("alpha", mastery="retrievable",
-                                   interval=3, reprobe="pending")],
-                         header=STATE_HEADER.replace(
-                             "solid-pending: none",
-                             "solid-pending: alpha"))
-        self.grades("- grade: alpha | result: pass | note: re-probe")
-        meta, _ = self.state()
-        r = self.record("alpha")
-        self.assertEqual(r["reprobe"], "done")
-        self.assertEqual(meta["solid-pending"], "none")
-        self.assertEqual(r["mastery"], "retrievable")  # not yet solid
-
-    def test_solid_awarded_at_35_pass_with_reprobe_done(self):
-        self.write_state([rec_line("alpha", mastery="retrievable",
-                                   interval=35, reprobe="done")])
-        self.grades("- grade: alpha | result: pass | note: long-run")
-        r = self.record("alpha")
-        self.assertEqual(r["mastery"], "solid")
-        self.assertEqual(r["interval"], 90)
-
-    def test_no_solid_without_reprobe(self):
-        self.write_state([rec_line("alpha", mastery="retrievable",
-                                   interval=35, reprobe="-")])
-        self.grades("- grade: alpha | result: pass | note: long-run")
-        self.assertEqual(self.record("alpha")["mastery"], "retrievable")
-
-    def test_rubric_fail_sets_repair_when_prereq_of_next_unit(self):
-        # alpha is prereq of beta (same unit) — not next-unit: no repair.
-        self.grades("- grade: alpha | result: rubric-fail | note: shaky")
-        meta, _ = self.state()
-        self.assertEqual(meta["repair-pending"], "none")
-        # make gamma (unit 2) depend on alpha -> now repair fires
-        self.write("domain-map.md",
-                   MAP_MD.replace("### gamma\ndef: judgment concept\n"
-                                  "prereqs: []",
-                                  "### gamma\ndef: judgment concept\n"
-                                  "prereqs: [alpha]"))
-        self.grades("- grade: alpha | result: rubric-fail | note: shaky",
-                    session="4")
-        meta, _ = self.state()
-        self.assertEqual(meta["repair-pending"], "alpha")
-
-
-# --------------------------------------------------------- commit-grades
-
-class TestCommitGrades(CourseCase):
-
-    def logfile(self, body, name="2026-07-20-3.md"):
-        p = self.dir / "log" / name
-        p.write_text(body)
-        return p
-
-    def test_replay_is_noop(self):
-        p = self.logfile("session: 3\n- grade: alpha | result: pass | note:\n")
-        schedule.cmd_commit_grades(self.dir, p)
-        first = self.record("alpha").copy()
-        schedule.cmd_commit_grades(self.dir, p)  # replay
-        self.assertEqual(self.record("alpha"), first)
-        meta, _ = self.state()
-        self.assertEqual(meta["committed-sessions"], ["3"])
-
-    def test_fractional_sessions_are_distinct(self):
-        p1 = self.logfile("session: 17r\n"
-                          "- grade: alpha | result: pass | note:\n",
-                          "2026-07-20-17r.md")
-        schedule.cmd_commit_grades(self.dir, p1)
-        p2 = self.logfile("session: 17\n"
-                          "- grade: beta | result: taught | note:\n",
-                          "2026-07-20-17.md")
-        schedule.cmd_commit_grades(self.dir, p2)  # must NOT be blocked
-        meta, _ = self.state()
-        self.assertEqual(set(meta["committed-sessions"]), {"17", "17r"})
-        self.assertEqual(self.record("beta")["status"], "active")
-
-    def test_unknown_id_is_loud_and_nothing_applies(self):
-        p = self.logfile("session: 3\n"
-                         "- grade: alpha | result: pass | note:\n"
-                         "- grade: nosuch | result: pass | note:\n")
-        before = self.record("alpha").copy()
-        with self.assertRaises(schedule.IntegrityError):
-            schedule.cmd_commit_grades(self.dir, p)
-        self.assertEqual(self.record("alpha"), before)  # all-or-nothing
-
-    def test_guard_and_grades_written_atomically(self):
-        p = self.logfile("session: 3\n- grade: alpha | result: pass | note:\n")
-        schedule.cmd_commit_grades(self.dir, p)
-        meta, recs = self.state()
-        self.assertIn("3", meta["committed-sessions"])
-        self.assertEqual(recs["alpha"]["interval"], 3)
-
-
-# ------------------------------------------------------------------ queue
-
-class TestQueue(CourseCase):
-
-    def test_cap_oldest_first_and_exclusions(self):
-        lines = [rec_line(f"c{i}", next=f"2026-07-{10+i:02d}")
-                 for i in range(7)]                      # 7 due, oldest c0
-        lines += [
-            rec_line("later", next="2026-08-01"),        # not due
-            rec_line("plat", status="plateaued"),        # excluded
-            rec_line("gone", status="dropped"),          # excluded
-            rec_line("raw", status="untaught", mastery="none",
-                     last="-", next="-", interval=0),    # excluded
-            rec_line("bg", verify="none"),               # excluded
-        ]
-        self.write_state(lines)
-        ids = schedule.build_queue(self.dir)
-        self.assertEqual(ids, [f"c{i}" for i in range(5)])
-
-    def test_solid_pending_prepended_outside_cap(self):
-        lines = [rec_line(f"c{i}", next=f"2026-07-{10+i:02d}")
-                 for i in range(5)]
-        lines.append(rec_line("key", next="2026-07-20", reprobe="pending"))
-        self.write_state(lines, header=STATE_HEADER.replace(
-            "solid-pending: none", "solid-pending: key"))
-        ids = schedule.build_queue(self.dir)
-        self.assertEqual(ids[0], "key")
-        self.assertEqual(len(ids), 6)      # 1 pending + full cap of 5
-
-    def test_queue_file_written(self):
-        schedule.cmd_queue(self.dir)
-        text = (self.dir / "review-queue.md").read_text()
-        self.assertIn("alpha", text)
-        self.assertIn("GENERATED", text)
-
-
-# ----------------------------------------------- seed / set-verify / misc
-
-class TestSeedAndVerbs(CourseCase):
-
-    def test_seed_upserts_idempotently(self):
-        schedule.cmd_seed(self.dir, "beta", "retrievable")
-        schedule.cmd_seed(self.dir, "beta", "retrievable")  # no dup, no drift
-        _, recs = self.state()
-        self.assertEqual(len([r for r in recs if r == "beta"]), 1)
-        r = recs["beta"]
-        self.assertEqual((r["mastery"], r["status"]),
-                         ("retrievable", "active"))
-        self.assertEqual(r["next"], "2026-07-21")
-
-    def test_seed_rejects_unknown_concept(self):
-        with self.assertRaises(schedule.IntegrityError):
-            schedule.cmd_seed(self.dir, "nosuch", "exposed")
-
-    def test_set_verify(self):
-        schedule.cmd_set_verify(self.dir, "alpha", "none")
-        self.assertEqual(self.record("alpha")["verify"], "none")
-        self.assertNotIn("alpha", schedule.build_queue(self.dir))
-
-
-# ---------------------------------------------------------------- reprune
-
-class TestReprune(CourseCase):
-
-    def test_drop_updates_state_and_plan(self):
-        schedule.cmd_reprune(self.dir, drop=["beta"])
-        self.assertEqual(self.record("beta")["status"], "dropped")
-        self.assertNotIn("beta", (self.dir / "plan.md").read_text())
-        self.assertNotIn("beta", schedule.build_queue(self.dir))
-
-    def test_refuses_to_drop_prereq_of_kept(self):
-        with self.assertRaises(schedule.IntegrityError):
-            schedule.cmd_reprune(self.dir, drop=["alpha"])  # beta needs it
-
-
-# ------------------------------------------------------------------ check
-
-class TestCheck(CourseCase):
-
-    def test_clean_course_passes(self):
-        schedule.cmd_check(self.dir)  # no raise
-
-    def test_cycle_detected(self):
-        self.write("domain-map.md", MAP_MD.replace(
-            "### alpha\ndef: first concept\nprereqs: []",
-            "### alpha\ndef: first concept\nprereqs: [beta]"))
-        with self.assertRaises(schedule.IntegrityError):
-            schedule.cmd_check(self.dir)
-
-    def test_erratum_remove_edge_heals_cycle(self):
-        broken = MAP_MD.replace(
-            "### alpha\ndef: first concept\nprereqs: []",
-            "### alpha\ndef: first concept\nprereqs: [beta]")
-        broken += "\nerratum 2026-07-20: remove-edge beta -> alpha\n"
-        self.write("domain-map.md", broken)
-        schedule.cmd_check(self.dir)  # healed, no raise
-
-    def test_state_missing_concept_detected(self):
-        self.write_state([rec_line("alpha")])   # beta/gamma/delta missing
-        with self.assertRaises(schedule.IntegrityError):
-            schedule.cmd_check(self.dir)
-
-    def test_plan_referencing_unknown_id_detected(self):
-        self.write("plan.md", PLAN_MD.replace("[alpha, beta]",
-                                              "[alpha, beta, ghost]"))
-        with self.assertRaises(schedule.IntegrityError):
-            schedule.cmd_check(self.dir)
-
-    def test_dropped_is_allowed_asymmetry(self):
-        schedule.cmd_reprune(self.dir, drop=["beta"])
-        schedule.cmd_check(self.dir)  # dropped-in-state, absent-in-plan: OK
-
-
-# ----------------------------------------------------------------- assets
-
-GOOD_ASSETS = """\
+ASSETS_U1 = """\
 <!-- elenchus:assets unit: 01 -->
 
 ## concept: alpha
-- quiz: What is alpha? | a: the first concept | distractor: M1
-- example: worked | here is alpha worked through
-- example: faded | now you finish the last step
-- self-explain: Why does that follow?
+- quiz: What does alpha name? | a: the first thing | distractor: M1
+- example: worked | Given x, alpha yields y, because the rule says so.
+- apply: point at an alpha in this transcript
 
 ## concept: beta
-- quiz: What is beta? | a: the second concept
-- example: worked | beta, worked
+- quiz: What does beta name? | a: the second thing | distractor: people mix it with alpha
 
 ## rubric: alpha
-- claim: alpha precedes beta
+- claim: alpha comes before beta
 - avoid: M1
 
 ## interleaved
-- problem: which applies here? | concepts: alpha, beta
-- problem: and here? | concepts: beta
-- problem: and this one? | concepts: alpha
+- problem: which of the two applies here, and why? | concepts: alpha, beta
+"""
+
+ASSETS_U2 = """\
+<!-- elenchus:assets unit: 02 -->
+
+## concept: gamma
+- apply: use gamma on the case below
+
+## concept: delta
+- quiz: What does delta name? | a: the fourth thing
+
+## rubric: gamma
+- claim: gamma is applied, never recited
+- avoid: M1
+
+## interleaved
+- problem: first mixed problem | concepts: alpha, gamma
+- problem: second mixed problem | concepts: beta, delta
 """
 
 
+def log_text(session, *grades, extra=""):
+    body = "\n".join(
+        f"- grade: {cid} | result: {res} | note: {note}"
+        for cid, res, note in grades)
+    return (f"session: {session}\n\n## taught\nstuff\n\n"
+            f"## grades\n{body}\n\n## open question\n{extra}\n")
+
+
+class CourseCase(unittest.TestCase):
+    """A valid mid-flight course in a temp dir."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="elenchus-test-"))
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        (self.dir / "domain-map.md").write_text(MAP_MD, encoding="utf-8")
+        (self.dir / "plan.md").write_text(PLAN_MD, encoding="utf-8")
+        (self.dir / "knowledge-state.md").write_text(STATE_MD,
+                                                     encoding="utf-8")
+        (self.dir / "assets").mkdir()
+        (self.dir / "assets" / "unit-01.md").write_text(ASSETS_U1,
+                                                        encoding="utf-8")
+        (self.dir / "log").mkdir()
+        os.environ["ELENCHUS_TODAY"] = TODAY
+        self.addCleanup(os.environ.pop, "ELENCHUS_TODAY", None)
+        self.addCleanup(os.environ.pop, "ELENCHUS_NOW", None)
+
+    # helpers -----------------------------------------------------------
+    def state(self):
+        return S.load_state(self.dir)
+
+    def rec(self, cid):
+        return self.state()[1][cid]
+
+    def write_log(self, name, text):
+        p = self.dir / "log" / name
+        p.write_text(text, encoding="utf-8")
+        return p
+
+    def set_record(self, cid, **kw):
+        meta, recs = self.state()
+        recs[cid].update(kw)
+        S.save_state(self.dir, meta, recs)
+
+    def set_meta(self, **kw):
+        meta, recs = self.state()
+        meta.update(kw)
+        S.save_state(self.dir, meta, recs)
+
+    def add_u2_assets(self):
+        (self.dir / "assets" / "unit-02.md").write_text(ASSETS_U2,
+                                                        encoding="utf-8")
+
+    def git_init(self):
+        S._ensure_repo(self.dir)
+
+    def cli(self, *args, env=None):
+        e = dict(os.environ)
+        e.update(env or {})
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--course", str(self.dir), *args],
+            capture_output=True, text=True, cwd=self.dir, env=e)
+
+
+# ======================================================== state parsing
+
+class TestStateParsing(CourseCase):
+
+    def test_roundtrip_is_stable(self):
+        meta, recs = self.state()
+        S.save_state(self.dir, meta, recs)
+        meta2, recs2 = self.state()
+        self.assertEqual(recs, recs2)
+        self.assertEqual(meta["committed-sessions"],
+                         meta2["committed-sessions"])
+
+    def test_body_comments_are_tolerated(self):
+        self.assertIn("alpha", self.state()[1])
+
+    def test_missing_header_is_loud(self):
+        (self.dir / "knowledge-state.md").write_text("- id: a\n",
+                                                     encoding="utf-8")
+        with self.assertRaises(S.FormatError):
+            self.state()
+
+    def test_duplicate_id_is_loud(self):
+        p = self.dir / "knowledge-state.md"
+        dup = [ln for ln in STATE_MD.splitlines() if ln.startswith("- id: beta")]
+        p.write_text(p.read_text(encoding="utf-8") + dup[0] + "\n",
+                     encoding="utf-8")
+        with self.assertRaisesRegex(S.FormatError, "duplicate"):
+            self.state()
+
+    def test_bad_status_value_is_rejected_on_load(self):
+        p = self.dir / "knowledge-state.md"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "status: active", "status: Active"), encoding="utf-8")
+        with self.assertRaisesRegex(S.FormatError, "status"):
+            self.state()
+
+    def test_bad_verify_value_is_rejected_on_load(self):
+        p = self.dir / "knowledge-state.md"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "verify: quiz", "verify: Quiz", 1), encoding="utf-8")
+        with self.assertRaisesRegex(S.FormatError, "verify"):
+            self.state()
+
+    def test_bad_date_is_rejected_on_load(self):
+        p = self.dir / "knowledge-state.md"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "next: 2026-07-21", "next: 2026-7-21"), encoding="utf-8")
+        with self.assertRaisesRegex(S.FormatError, "YYYY-MM-DD"):
+            self.state()
+
+    def test_negative_int_is_rejected_on_load(self):
+        p = self.dir / "knowledge-state.md"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "fails: 0", "fails: -5", 1), encoding="utf-8")
+        with self.assertRaises(S.FormatError):
+            self.state()
+
+    def test_pipe_in_note_is_scrubbed_not_corrupting(self):
+        self.set_record("alpha", note="said a | b")
+        self.assertNotIn("|", self.rec("alpha")["note"])
+
+    def test_save_is_atomic(self):
+        """A crash mid-serialize must leave the old file byte-identical."""
+        before = (self.dir / "knowledge-state.md").read_bytes()
+        meta, recs = self.state()
+        real = S.serialize_state
+
+        def boom(*a, **k):
+            raise RuntimeError("crash")
+        S.serialize_state = boom
+        try:
+            with self.assertRaises(RuntimeError):
+                S.save_state(self.dir, meta, recs)
+        finally:
+            S.serialize_state = real
+        self.assertEqual(before,
+                         (self.dir / "knowledge-state.md").read_bytes())
+        self.assertFalse(list(self.dir.glob("*.tmp")))
+
+    def test_utf8_survives_a_c_locale(self):
+        self.git_init()
+        self.write_log("2026-07-21-2.md",
+                       log_text("2", ("alpha", "pass", "said yes — hit M1")))
+        r = self.cli("commit-grades", "log/2026-07-21-2.md",
+                     env={"LC_ALL": "C", "LANG": "C"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("—", self.rec("alpha")["note"])
+
+
+# ======================================================== grade parsing
+
+class TestGradeParsing(CourseCase):
+
+    def test_basic(self):
+        tok, g = S.parse_log_grades(log_text("4", ("alpha", "pass", "clean")))
+        self.assertEqual(tok, "4")
+        self.assertEqual(g, [{"id": "alpha", "result": "pass",
+                              "note": "clean"}])
+
+    def test_malformed_is_loud(self):
+        with self.assertRaises(S.FormatError):
+            S.parse_log_grades("session: 4\n## grades\n- grade: alpha pass\n")
+
+    def test_bold_grade_line_is_loud_not_silent(self):
+        with self.assertRaises(S.FormatError):
+            S.parse_log_grades(
+                "session: 4\n## grades\n- **grade:** alpha | result: pass\n")
+
+    def test_endash_bullet_is_loud_not_silent(self):
+        with self.assertRaises(S.FormatError):
+            S.parse_log_grades(
+                "session: 4\n## grades\n"
+                "– grade: alpha | result: pass | note: x\n")
+
+    def test_invalid_result_is_loud(self):
+        with self.assertRaises(S.FormatError):
+            S.parse_log_grades(log_text("4", ("alpha", "solid", "nope")))
+
+    def test_duplicate_grade_for_one_concept_is_rejected(self):
+        """The same-session re-probe must not silently erase the fail."""
+        with self.assertRaisesRegex(S.FormatError, "two grade lines"):
+            S.parse_log_grades(log_text(
+                "4", ("alpha", "fail", "missed"), ("alpha", "pass", "got it")))
+
+    def test_grade_line_in_prose_does_not_count(self):
+        text = log_text("4", ("alpha", "pass", "ok"),
+                        extra="for example: - grade: beta | result: fail "
+                              "| note: sample")
+        _, g = S.parse_log_grades(text)
+        self.assertEqual([x["id"] for x in g], ["alpha"])
+
+    def test_no_session_line_is_loud(self):
+        with self.assertRaises(S.FormatError):
+            S.parse_log_grades("## grades\n- grade: a | result: pass | note: x")
+
+    def test_bad_token_is_loud(self):
+        with self.assertRaises(S.FormatError):
+            S.parse_log_grades(log_text("2/10", ("alpha", "pass", "x")))
+
+    def test_crlf(self):
+        tok, g = S.parse_log_grades(
+            log_text("4", ("alpha", "pass", "x")).replace("\n", "\r\n"))
+        self.assertEqual((tok, len(g)), ("4", 1))
+
+    def test_tokens_are_string_keyed(self):
+        for t in ("17", "17r", "17r2"):
+            self.assertTrue(S.valid_session_token(t))
+        for t in ("2/10", "03x", "r4", ""):
+            self.assertFalse(S.valid_session_token(t))
+
+
+# ==================================================== transition table
+
+class TestTransitions(CourseCase):
+
+    def grade(self, cid, result, needs=frozenset()):
+        meta, recs = self.state()
+        S._apply_grade(recs[cid], {"id": cid, "result": result, "note": ""},
+                       meta, dt.date.fromisoformat(TODAY), needs)
+        S.save_state(self.dir, meta, recs)
+        return meta, recs
+
+    def test_taught_activates_and_schedules_tomorrow(self):
+        self.grade("beta", "taught")
+        r = self.rec("beta")
+        self.assertEqual((r["status"], r["interval"], r["next"]),
+                         ("active", 1, "2026-07-22"))
+
+    def test_pass_climbs_the_ladder(self):
+        self.grade("alpha", "pass")
+        self.assertEqual(self.rec("alpha")["interval"], 3)
+
+    def test_fail_steps_back_one_not_to_zero(self):
+        self.set_record("alpha", interval=16)
+        self.grade("alpha", "fail")
+        self.assertEqual(self.rec("alpha")["interval"], 7)
+        self.set_record("alpha", interval=1)
+        self.grade("alpha", "fail")
+        self.assertEqual(self.rec("alpha")["interval"], 1)
+
+    def test_pass_resets_the_fail_counter(self):
+        self.set_record("alpha", fails=2)
+        self.grade("alpha", "pass")
+        self.assertEqual(self.rec("alpha")["fails"], 0)
+
+    def test_three_fails_plateaus(self):
+        for _ in range(3):
+            self.grade("alpha", "fail")
+        self.assertEqual(self.rec("alpha")["status"], "plateaued")
+
+    def test_plateau_has_an_exit_via_taught(self):
+        """checkpoint.md's 'keep trying' verdict must really re-enter it."""
+        for _ in range(3):
+            self.grade("alpha", "fail")
+        self.assertNotIn("alpha", S.build_queue(self.dir))
+        self.grade("alpha", "taught")
+        r = self.rec("alpha")
+        self.assertEqual((r["status"], r["fails"]), ("active", 0))
+        self.set_record("alpha", next=TODAY)   # when its day comes round
+        self.assertIn("alpha", S.build_queue(self.dir))
+
+    def test_plateau_has_an_exit_via_pass(self):
+        """checkpoint.md's 'count it' verdict must really count it."""
+        for _ in range(3):
+            self.grade("alpha", "fail")
+        self.grade("alpha", "pass")
+        self.assertEqual(self.rec("alpha")["status"], "active")
+
+    def test_pass_on_an_untaught_row_makes_it_visible(self):
+        """A pass is evidence of contact; the row must not stay a ghost."""
+        self.grade("beta", "pass")
+        r = self.rec("beta")
+        self.assertEqual((r["status"], r["interval"]), ("active", 1))
+        self.set_record("beta", next=TODAY)
+        self.assertIn("beta", S.build_queue(self.dir))
+
+    def test_fail_on_an_untaught_row_activates_it(self):
+        self.grade("beta", "fail")
+        self.assertEqual(self.rec("beta")["status"], "active")
+
+    def test_rubric_pass_behaves_as_a_pass(self):
+        self.grade("alpha", "rubric-pass")
+        self.assertEqual(self.rec("alpha")["interval"], 3)
+
+    def test_rubric_fail_actually_reschedules(self):
+        """The hardest assessment failing must change the schedule."""
+        self.set_record("alpha", interval=16)
+        self.grade("alpha", "rubric-fail")
+        r = self.rec("alpha")
+        self.assertEqual((r["interval"], r["fails"], r["next"]),
+                         (7, 1, "2026-07-28"))
+
+    def test_rubric_fail_sets_repair_only_for_next_unit_prereqs(self):
+        meta, _ = self.grade("alpha", "rubric-fail", needs={"alpha"})
+        self.assertEqual(meta["repair-pending"], "alpha")
+        self.set_meta(**{"repair-pending": "none"})
+        meta, _ = self.grade("beta", "rubric-fail", needs={"alpha"})
+        self.assertEqual(meta["repair-pending"], "none")
+
+    def test_repair_flag_is_cleared_by_a_pass(self):
+        self.set_meta(**{"repair-pending": "alpha"})
+        meta, _ = self.grade("alpha", "pass")
+        self.assertEqual(meta["repair-pending"], "none")
+
+    def test_repair_flag_is_cleared_by_a_fail_which_plateaus(self):
+        self.set_meta(**{"repair-pending": "alpha"})
+        meta, _ = self.grade("alpha", "fail")
+        self.assertEqual(meta["repair-pending"], "none")
+        self.assertEqual(self.rec("alpha")["status"], "plateaued")
+
+    def test_a_repair_never_re_arms_itself(self):
+        self.set_meta(**{"repair-pending": "alpha"})
+        meta, _ = self.grade("alpha", "rubric-fail", needs={"alpha"})
+        self.assertEqual(meta["repair-pending"], "none")
+
+    def test_ladder_bounds(self):
+        self.assertEqual(S.ladder_up(180), 180)
+        self.assertEqual(S.ladder_down(1), 1)
+        self.assertEqual(S.ladder_up(0), 1)
+
+    def test_band_is_derived_not_stored(self):
+        self.assertNotIn("mastery", S.RECORD_FIELDS)
+        self.set_record("alpha", interval=35, fails=0)
+        self.assertEqual(S.band(self.rec("alpha")), "solid")
+        self.set_record("alpha", interval=7)
+        self.assertEqual(S.band(self.rec("alpha")), "retrievable")
+        self.set_record("alpha", interval=1)
+        self.assertEqual(S.band(self.rec("alpha")), "exposed")
+
+
+# ====================================================== commit-grades
+
+class TestCommitGrades(CourseCase):
+
+    def test_applies_and_records_the_token(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "clean")))
+        self.assertEqual(S.cmd_commit_grades(self.dir, p), "applied")
+        self.assertIn("2", self.state()[0]["committed-sessions"])
+
+    def test_replay_is_a_noop(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "clean")))
+        S.cmd_commit_grades(self.dir, p)
+        iv = self.rec("alpha")["interval"]
+        self.assertEqual(S.cmd_commit_grades(self.dir, p), "noop")
+        self.assertEqual(self.rec("alpha")["interval"], iv)
+
+    def test_unknown_id_applies_nothing(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "x"),
+                                    ("nope", "pass", "y")))
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_commit_grades(self.dir, p)
+        self.assertEqual(self.rec("alpha")["interval"], 1)
+        self.assertNotIn("2", self.state()[0]["committed-sessions"])
+
+    def test_note_is_stored(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "fail", "hit M1")))
+        S.cmd_commit_grades(self.dir, p)
+        self.assertEqual(self.rec("alpha")["note"], "hit M1")
+
+    def test_fractional_tokens_are_distinct(self):
+        a = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "x")))
+        b = self.write_log("2026-07-21-2r.md",
+                           log_text("2r", ("beta", "taught", "y")))
+        self.assertEqual(S.cmd_commit_grades(self.dir, a), "applied")
+        self.assertEqual(S.cmd_commit_grades(self.dir, b), "applied")
+        self.assertEqual(self.rec("beta")["status"], "active")
+
+
+# ================================================================ queue
+
+class TestQueue(CourseCase):
+
+    def due(self, cid, days_ago=1, **kw):
+        d = (dt.date.fromisoformat(TODAY) - dt.timedelta(days_ago)).isoformat()
+        self.set_record(cid, status="active", next=d, **kw)
+
+    def test_untaught_is_excluded(self):
+        self.due("beta")
+        self.set_record("beta", status="untaught")
+        self.assertNotIn("beta", S.build_queue(self.dir))
+
+    def test_verify_none_is_excluded(self):
+        self.due("beta")
+        self.set_record("beta", verify="none")
+        self.assertNotIn("beta", S.build_queue(self.dir))
+
+    def test_dropped_is_excluded(self):
+        self.due("beta")
+        self.set_record("beta", status="dropped")
+        self.assertNotIn("beta", S.build_queue(self.dir))
+
+    def test_plateaued_is_excluded(self):
+        self.due("beta")
+        self.set_record("beta", status="plateaued")
+        self.assertNotIn("beta", S.build_queue(self.dir))
+
+    def test_not_yet_due_is_excluded(self):
+        self.set_record("beta", status="active", next="2099-01-01")
+        self.assertNotIn("beta", S.build_queue(self.dir))
+
+    def test_due_and_active_is_included(self):
+        self.due("beta")
+        self.assertIn("beta", S.build_queue(self.dir))
+
+    def test_cap_is_respected(self):
+        for cid in ("beta", "gamma", "delta"):
+            self.due(cid)
+        self.assertEqual(len(S.build_queue(self.dir, cap=2)), 2)
+
+    def test_fresh_material_outranks_a_stale_backlog(self):
+        """A concept taught yesterday must not be crowded out by an
+        old, long-interval item that merely came due earlier."""
+        self.due("beta", days_ago=40, interval=35)
+        self.due("delta", days_ago=1, interval=1)
+        self.assertEqual(S.build_queue(self.dir, cap=1), ["delta"])
+
+    def test_terminal_queue_ignores_due_dates_and_favours_the_weakest(self):
+        self.set_record("beta", status="active", next="2099-01-01",
+                        interval=35, fails=0)
+        self.set_record("gamma", status="active", next="2099-01-01",
+                        interval=1, fails=2)
+        q = S.build_queue(self.dir, cap=5, terminal=True)
+        self.assertEqual(q[0], "gamma")
+        self.assertIn("beta", q)
+
+    def test_queue_file_records_the_rolled_forward_count(self):
+        for cid in ("beta", "gamma", "delta"):
+            self.due(cid)
+        S.cmd_queue(self.dir, cap=1)
+        text = (self.dir / "review-queue.md").read_text(encoding="utf-8")
+        self.assertIn("rolled-forward: 3", text)
+
+
+# ======================================================= seed / verify
+
+class TestSeedAndVerbs(CourseCase):
+
+    def test_seed_is_idempotent(self):
+        S.cmd_seed(self.dir, "beta", "exposed")
+        S.cmd_seed(self.dir, "beta", "exposed")
+        self.assertEqual(len(self.state()[1]), 4)
+
+    def test_seed_carries_placement_evidence_into_the_schedule(self):
+        """Something they already retrieve must not be reviewed tomorrow."""
+        S.cmd_seed(self.dir, "beta", "retrievable")
+        r = self.rec("beta")
+        self.assertEqual((r["interval"], r["next"]), (7, "2026-07-28"))
+
+    def test_seed_none_leaves_it_untaught(self):
+        S.cmd_seed(self.dir, "delta", "none")
+        self.assertEqual(self.rec("delta")["status"], "untaught")
+
+    def test_seed_rejects_unknown_concept(self):
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_seed(self.dir, "nope", "exposed")
+
+    def test_set_verify_none_drops_it_from_the_stuck_list(self):
+        self.set_record("alpha", status="plateaued")
+        S.cmd_set_verify(self.dir, "alpha", "none")
+        self.assertEqual(self.rec("alpha")["status"], "dropped")
+        self.assertNotIn("alpha", S.cmd_report(self.dir).split("stuck")[1])
+
+
+# ============================================================== reprune
+
+class TestReprune(CourseCase):
+
+    def test_drops_and_excludes_from_queue(self):
+        self.set_record("delta", status="active", next="2026-07-01")
+        S.cmd_reprune(self.dir, ["delta"])
+        self.assertEqual(self.rec("delta")["status"], "dropped")
+        self.assertNotIn("delta", S.build_queue(self.dir))
+
+    def test_refuses_to_orphan_a_prerequisite(self):
+        with self.assertRaisesRegex(S.IntegrityError, "prerequisite"):
+            S.cmd_reprune(self.dir, ["alpha"])
+
+    def test_refuses_to_drop_a_threshold_concept(self):
+        with self.assertRaisesRegex(S.IntegrityError, "threshold"):
+            S.cmd_reprune(self.dir, ["gamma"])
+
+    def test_strips_the_id_from_plan_lists(self):
+        S.cmd_reprune(self.dir, ["delta"])
+        self.assertNotIn("delta",
+                         (self.dir / "plan.md").read_text(encoding="utf-8"))
+
+    def test_clears_a_repair_pointing_at_a_dropped_concept(self):
+        self.set_meta(**{"repair-pending": "delta"})
+        S.cmd_reprune(self.dir, ["delta"])
+        self.assertEqual(self.state()[0]["repair-pending"], "none")
+
+    def test_unknown_id_is_loud(self):
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_reprune(self.dir, ["nope"])
+
+
+# =============================================================== assets
+
 class TestAssets(CourseCase):
 
-    def put(self, text, name="unit-01.md"):
-        (self.dir / "assets" / name).write_text(text)
+    def check_assets(self, text, unit_num=1):
+        _, units = S.parse_plan(self.dir)
+        unit = [u for u in units if u["num"] == unit_num][0]
+        S.validate_assets(unit, S.parse_assets(text), S.parse_map(self.dir),
+                          where="t", first_unit=(unit_num == 1))
 
-    def test_good_assets_parse_and_pass(self):
-        a = schedule.parse_assets(GOOD_ASSETS)
-        self.assertEqual(a["concepts"]["alpha"]["quiz"][0]["a"],
-                         "the first concept")
-        self.assertEqual(a["rubrics"]["alpha"]["avoid"], ["M1"])
-        self.assertEqual(len(a["interleaved"]), 3)
-        schedule.cmd_check(self.dir)
+    def test_good_assets_pass(self):
+        self.check_assets(ASSETS_U1)
 
-    def test_started_unit_without_assets_fails(self):
-        (self.dir / "assets" / "unit-01.md").unlink()  # unit 1 in-progress
-        with self.assertRaises(schedule.IntegrityError):
-            schedule.cmd_check(self.dir)
+    def test_all_todo_assets_are_rejected(self):
+        """SKILL.md claims check rejects placeholder work. Make it true."""
+        junk = textwrap.dedent("""\
+            ## concept: alpha
+            - quiz: TODO | a: TODO | distractor: M1
+            - example: worked | TODO
+            ## concept: beta
+            - quiz: TODO | a: TODO
+            ## rubric: alpha
+            - claim: TODO
+            - avoid: M1
+            ## interleaved
+            - problem: TODO | concepts: alpha
+            - problem: TODO | concepts: beta
+            """)
+        with self.assertRaises(S.IntegrityError):
+            self.check_assets(junk)
 
-    def test_placeholder_assets_are_rejected(self):
-        # the lazy-executor failure: quiz keys present, rubric absent
-        self.put(GOOD_ASSETS.split("## rubric")[0]
-                 + "## interleaved\n- problem: x | concepts: alpha\n")
-        with self.assertRaises(schedule.IntegrityError) as cm:
-            schedule.cmd_check(self.dir)
-        self.assertIn("rubric", str(cm.exception))
+    def test_empty_fields_are_rejected(self):
+        junk = textwrap.dedent("""\
+            ## concept: alpha
+            - quiz:  | a:
+            - example: worked
+            ## concept: beta
+            - quiz: ? | a: .
+            ## rubric: alpha
+            - claim:
+            - avoid: M1
+            ## interleaved
+            - problem:
+            - problem:
+            - problem:
+            """)
+        with self.assertRaises((S.IntegrityError, S.FormatError)):
+            self.check_assets(junk)
 
-    def test_quiz_without_answer_key_is_loud(self):
-        with self.assertRaises(schedule.FormatError):
-            schedule.parse_assets("## concept: alpha\n- quiz: no key here\n")
+    def test_interleaved_must_name_concepts(self):
+        text = ASSETS_U1.replace(
+            "- problem: which of the two applies here, and why? | "
+            "concepts: alpha, beta",
+            "- problem: a real problem with no concept list")
+        with self.assertRaisesRegex(S.IntegrityError, "interleaved"):
+            self.check_assets(text)
 
-    def test_invented_distractor_rejected(self):
-        self.put(GOOD_ASSETS.replace("distractor: M1", "distractor: M9"))
-        with self.assertRaises(schedule.IntegrityError) as cm:
-            schedule.cmd_check(self.dir)
-        self.assertIn("M9", str(cm.exception))
+    def test_interleaved_concepts_must_exist(self):
+        text = ASSETS_U1.replace("concepts: alpha, beta",
+                                 "concepts: alpha, kumquat")
+        with self.assertRaisesRegex(S.IntegrityError, "unknown concept"):
+            self.check_assets(text)
 
-    def test_too_few_interleaved_rejected(self):
-        self.put(GOOD_ASSETS.replace(
-            "- problem: and this one? | concepts: alpha\n", ""))
-        with self.assertRaises(schedule.IntegrityError) as cm:
-            schedule.cmd_check(self.dir)
-        self.assertIn("interleaved", str(cm.exception))
+    def test_keystone_without_map_misconceptions_needs_no_avoid(self):
+        """The rule that made the bundled example unauthorable."""
+        p = self.dir / "domain-map.md"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "threshold: yes\nmisconceptions:\n  M1: gamma's wrong model",
+            "threshold: yes"), encoding="utf-8")
+        text = textwrap.dedent("""\
+            ## concept: gamma
+            - apply: use gamma here on a real case
+            ## concept: delta
+            - quiz: what does delta name? | a: the fourth thing
+            ## rubric: gamma
+            - claim: gamma is applied, not recited
+            ## interleaved
+            - problem: a real one | concepts: alpha
+            - problem: another real one | concepts: beta
+            """)
+        self.check_assets(text, unit_num=2)
 
-    def test_use_concept_needs_apply_prompt(self):
-        # unit 2 holds gamma (verify: use); give it a quiz-only block
-        (self.dir / "assets" / "unit-02.md").write_text(
-            "## concept: gamma\n- quiz: q | a: a\n"
-            "## rubric: gamma\n- claim: c\n- avoid: M1\n"
-            "## interleaved\n- problem: a | concepts: gamma\n"
-            "- problem: b | concepts: gamma\n"
-            "- problem: c | concepts: gamma\n")
-        self.put(GOOD_ASSETS)
-        with self.assertRaises(schedule.IntegrityError) as cm:
-            schedule.cmd_check(self.dir)
-        self.assertIn("apply", str(cm.exception))
+    def test_mn_shaped_distractor_must_resolve(self):
+        text = ASSETS_U1.replace("distractor: M1", "distractor: M9")
+        with self.assertRaisesRegex(S.IntegrityError, "M9"):
+            self.check_assets(text)
 
-    def test_misconceptions_parsed_from_map(self):
-        self.assertEqual(
-            schedule.parse_map(self.dir)["alpha"]["misconceptions"], ["M1"])
+    def test_free_text_distractor_is_allowed(self):
+        text = ASSETS_U1.replace("distractor: M1",
+                                 "distractor: thinks it is a synonym")
+        self.check_assets(text)
+
+    def test_wrapped_values_are_joined_not_truncated(self):
+        text = ASSETS_U1.replace(
+            "- example: worked | Given x, alpha yields y, because the rule "
+            "says so.",
+            "- example: worked | Given x, alpha yields y,\n"
+            "  because the rule says so and the second line matters.")
+        parsed = S.parse_assets(text)
+        self.assertIn("second line matters",
+                      parsed["concepts"]["alpha"]["example"]["worked"])
+        self.check_assets(text)
+
+    def test_wrapped_quiz_answer_does_not_hard_fail(self):
+        text = ASSETS_U1.replace(
+            "- quiz: What does alpha name? | a: the first thing | "
+            "distractor: M1",
+            "- quiz: What does alpha name? | a: the first thing,\n"
+            "  spelled out at length | distractor: M1")
+        self.check_assets(text)
+
+    def test_verify_use_needs_an_apply_prompt(self):
+        text = ASSETS_U2.replace("- apply: use gamma on the case below", "")
+        with self.assertRaisesRegex(S.IntegrityError, "apply"):
+            self.check_assets(text, unit_num=2)
+
+    def test_quiz_concept_does_not_require_a_worked_example(self):
+        """A definitional concept has no procedure to work through."""
+        text = textwrap.dedent("""\
+            ## concept: alpha
+            - quiz: What does alpha name? | a: the first thing
+            ## concept: beta
+            - quiz: What does beta name? | a: the second thing
+            ## rubric: alpha
+            - claim: alpha comes before beta
+            - avoid: M1
+            ## interleaved
+            - problem: a real mixed problem | concepts: alpha, beta
+            """)
+        self.check_assets(text)
+
+    def test_html_comments_do_not_break_sections(self):
+        self.check_assets("<!-- ## notes: not a section -->\n" + ASSETS_U1)
+
+    def test_unknown_section_is_loud(self):
+        with self.assertRaises(S.FormatError):
+            S.parse_assets("## notes: hello\n- quiz: a | a: b\n")
+
+    def test_a_typod_field_is_loud_not_silently_dropped(self):
+        for bad in ("## concept: alpha\n- quizz: a | a: b\n",
+                    "## rubric: alpha\n- clam: a\n",
+                    "## interleaved\n- problems: a | concepts: alpha\n"):
+            with self.assertRaisesRegex(S.FormatError, "unknown field"):
+                S.parse_assets(bad)
+
+    def test_missing_concept_block_is_loud(self):
+        text = ASSETS_U1.replace(
+            "## concept: beta\n- quiz: What does beta name? | a: the second "
+            "thing | distractor: people mix it with alpha\n", "")
+        with self.assertRaisesRegex(S.IntegrityError, "beta"):
+            self.check_assets(text)
+
+    def test_later_units_need_two_interleaved(self):
+        text = ASSETS_U2.replace(
+            "- problem: second mixed problem | concepts: beta, delta", "")
+        with self.assertRaisesRegex(S.IntegrityError, ">=2"):
+            self.check_assets(text, unit_num=2)
 
 
-# ----------------------------------------------------------------- report
+# ================================================================ check
 
-class TestReport(CourseCase):
+class TestCheck(CourseCase):
 
-    def test_report_mentions_plateaued_and_due(self):
-        self.write_state([
-            rec_line("alpha"),
-            rec_line("beta", status="plateaued"),
-            rec_line("gamma", verify="use", ceiling="retrievable",
-                     next="2026-07-01"),
-            rec_line("delta", verify="none", mastery="none",
-                     status="untaught", last="-", next="-", interval=0),
-        ])
-        out = schedule.cmd_report(self.dir)
-        self.assertIn("plateaued", out)
-        self.assertIn("beta", out)
-        self.assertIn("due", out)
+    def test_valid_course_passes(self):
+        self.assertEqual(S.cmd_check(self.dir), "ok")
+
+    def test_map_trailing_sections_do_not_pollute_the_last_concept(self):
+        """## Controversies / ## Sources must not rewrite delta's fields."""
+        concepts = S.parse_map(self.dir)
+        self.assertEqual(concepts["delta"]["prereqs"], ["beta"])
+        self.assertEqual(concepts["delta"]["verify"], "quiz")
+
+    def test_unknown_prereq_is_loud(self):
+        p = self.dir / "domain-map.md"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "prereqs: [beta]", "prereqs: [ghost]"), encoding="utf-8")
+        with self.assertRaisesRegex(S.IntegrityError, "ghost"):
+            S.cmd_check(self.dir)
+
+    def test_cycle_is_loud(self):
+        p = self.dir / "domain-map.md"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "### alpha\ndef: the first thing\nprereqs: []",
+            "### alpha\ndef: the first thing\nprereqs: [delta]"),
+            encoding="utf-8")
+        with self.assertRaisesRegex(S.IntegrityError, "cycle"):
+            S.cmd_check(self.dir)
+
+    def test_errata_heal_an_edge_in_several_spellings(self):
+        base = (self.dir / "domain-map.md").read_text(
+            encoding="utf-8").replace(
+            "### alpha\ndef: the first thing\nprereqs: []",
+            "### alpha\ndef: the first thing\nprereqs: [delta]")
+        for form in ("erratum 2026-07-21: remove-edge delta -> alpha",
+                     "- erratum 2026-07-21: remove-edge delta -> alpha",
+                     "  Erratum 2026-07-21: remove-edge delta -> alpha"):
+            (self.dir / "domain-map.md").write_text(
+                base + "\n" + form + "\n", encoding="utf-8")
+            self.assertEqual(S.cmd_check(self.dir), "ok", form)
+
+    def test_orphan_state_row_is_loud(self):
+        meta, recs = self.state()
+        recs["ghost"] = dict(recs["alpha"], id="ghost")
+        S.save_state(self.dir, meta, recs)
+        with self.assertRaisesRegex(S.IntegrityError, "ghost"):
+            S.cmd_check(self.dir)
+
+    def test_missing_state_row_is_loud(self):
+        meta, recs = self.state()
+        del recs["delta"]
+        S.save_state(self.dir, meta, recs)
+        with self.assertRaisesRegex(S.IntegrityError, "delta"):
+            S.cmd_check(self.dir)
+
+    def test_verify_disagreement_with_the_map_is_loud(self):
+        self.set_record("alpha", verify="use")
+        with self.assertRaisesRegex(S.IntegrityError, "verify"):
+            S.cmd_check(self.dir)
+
+    def test_keystone_must_be_one_of_the_units_concepts(self):
+        p = self.dir / "plan.md"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "keystones: [alpha]", "keystones: [delta]"), encoding="utf-8")
+        with self.assertRaisesRegex(S.IntegrityError, "keystone"):
+            S.cmd_check(self.dir)
+
+    def test_unit_too_short_for_its_concepts_is_loud(self):
+        """The arithmetic that silently abandoned two of three concepts."""
+        p = self.dir / "plan.md"
+        p.write_text(PLAN_MD.replace(
+            "sessions: 3\nconcepts: [alpha, beta]",
+            "sessions: 2\nconcepts: [alpha, beta]"), encoding="utf-8")
+        with self.assertRaisesRegex(S.IntegrityError, "needs >=3"):
+            S.cmd_check(self.dir)
+
+    def test_course_without_room_to_consolidate_is_loud(self):
+        p = self.dir / "plan.md"
+        p.write_text(PLAN_MD.replace("next-session: 2/10",
+                                     "next-session: 2/7"), encoding="utf-8")
+        with self.assertRaisesRegex(S.IntegrityError, "consolidate"):
+            S.cmd_check(self.dir)
+
+    def test_bad_plan_header_values_are_loud(self):
+        for good, bad in (("course-status: active", "course-status: banana"),
+                          ("next-session: 2/10", "next-session: potato"),
+                          ("re-entry-pending: no", "re-entry-pending: maybe"),
+                          ("sessions-done: 1", "sessions-done: many")):
+            (self.dir / "plan.md").write_text(PLAN_MD.replace(good, bad),
+                                              encoding="utf-8")
+            with self.assertRaises(S.FormatError):
+                S.cmd_check(self.dir)
+
+    def test_bad_unit_status_is_loud(self):
+        (self.dir / "plan.md").write_text(
+            PLAN_MD.replace("status: untouched", "status: bananas"),
+            encoding="utf-8")
+        with self.assertRaises(S.FormatError):
+            S.cmd_check(self.dir)
+
+    def test_started_unit_without_assets_is_loud(self):
+        (self.dir / "assets" / "unit-01.md").unlink()
+        with self.assertRaisesRegex(S.IntegrityError, "unit-01"):
+            S.cmd_check(self.dir)
+
+    def test_plan_comments_do_not_become_concepts(self):
+        (self.dir / "plan.md").write_text(
+            PLAN_MD + "\n<!-- keystones: the 1-2 that matter -->\n",
+            encoding="utf-8")
+        self.assertEqual(S.cmd_check(self.dir), "ok")
+
+    def test_a_non_unit_section_is_not_a_unit(self):
+        (self.dir / "plan.md").write_text(PLAN_MD + "\n## Notes\nprose\n",
+                                          encoding="utf-8")
+        _, units = S.parse_plan(self.dir)
+        self.assertEqual([u["num"] for u in units], [1, 2])
 
 
-# ---------------------------------------------------------------- recover
+# ============================================================= dispatch
 
-def git(*args, cwd):
-    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t",
-                    *args], cwd=cwd, check=True, capture_output=True)
+class TestDispatch(CourseCase):
 
+    def hdr(self, **kw):
+        S.write_plan_header(self.dir, kw)
+
+    def test_standard_midway_through_a_unit(self):
+        d = S.dispatch(self.dir)
+        self.assertEqual(d["type"], "standard")
+        self.assertEqual(d["unit"]["num"], 1)
+        self.assertEqual(d["cap"], S.TEACHING_CAP)
+
+    def test_teach_back_on_the_units_last_session(self):
+        self.hdr(**{"next-session": "3/10"})
+        d = S.dispatch(self.dir)
+        self.assertEqual(d["type"], "teach-back")
+        self.assertEqual(d["cap"], S.QUEUE_CAP)
+
+    def test_placement_on_session_one(self):
+        self.hdr(**{"next-session": "1/10"})
+        self.assertEqual(S.dispatch(self.dir)["type"], "placement")
+
+    def test_lifecycle_when_not_active(self):
+        self.hdr(**{"course-status": "paused"})
+        self.assertEqual(S.dispatch(self.dir)["type"], "lifecycle")
+
+    def test_dormant_after_a_fortnight_of_silence(self):
+        """The pause rule must be reachable without a checkpoint."""
+        self.hdr(**{"last-attended": "2026-07-01"})
+        self.assertEqual(S.dispatch(self.dir)["type"], "dormant")
+
+    def test_re_entry_beats_a_standard_session(self):
+        self.hdr(**{"re-entry-pending": "yes"})
+        self.assertEqual(S.dispatch(self.dir)["type"], "re-entry")
+
+    def test_repair_beats_a_standard_session(self):
+        self.set_meta(**{"repair-pending": "alpha"})
+        d = S.dispatch(self.dir)
+        self.assertEqual((d["type"], d["concept"]), ("repair", "alpha"))
+
+    def test_consolidation_after_the_last_unit(self):
+        self.hdr(**{"next-session": "8/10"})
+        d = S.dispatch(self.dir)
+        self.assertEqual(d["type"], "consolidation")
+        self.assertTrue(d["terminal"])
+
+    def test_graduation_when_the_counter_is_exhausted(self):
+        """The state that used to serve standard sessions forever."""
+        self.hdr(**{"next-session": "11/10"})
+        self.assertEqual(S.dispatch(self.dir)["type"], "graduation")
+
+    def test_missing_assets_are_flagged_for_authoring(self):
+        self.hdr(**{"next-session": "3/10"})
+        self.assertEqual(S.dispatch(self.dir)["author"], "unit-02.md")
+        self.add_u2_assets()
+        self.assertIsNone(S.dispatch(self.dir)["author"])
+
+
+# ========================================================= begin / close
+
+class TestBeginClose(CourseCase):
+
+    def test_begin_locks_checks_and_dispatches(self):
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: standard", out)
+        self.assertIn("session: 2 of 10", out)
+        self.assertIn("quiz these", out)
+        self.assertTrue((self.dir / S.SENTINEL).exists())
+
+    def test_begin_refuses_when_a_session_is_live(self):
+        S.cmd_begin(self.dir)
+        with self.assertRaisesRegex(S.IntegrityError, "live"):
+            S.cmd_begin(self.dir)
+
+    def test_begin_fails_loudly_on_a_broken_course(self):
+        (self.dir / "assets" / "unit-01.md").write_text(
+            "## concept: alpha\n- quiz: TODO | a: TODO\n", encoding="utf-8")
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_begin(self.dir)
+
+    def test_begin_caps_the_queue_by_session_type(self):
+        for cid in ("beta", "gamma", "delta"):
+            self.set_record(cid, status="active", next="2026-07-01")
+        self.assertIn("quiz these (3)", S.cmd_begin(self.dir))
+
+    def test_begin_issues_a_fractional_token_for_a_repair(self):
+        self.set_meta(**{"repair-pending": "alpha"})
+        self.assertIn("session: 2r of 10", S.cmd_begin(self.dir))
+
+    def test_a_second_repair_gets_a_distinct_token(self):
+        self.set_meta(**{"repair-pending": "alpha"})
+        meta, recs = self.state()
+        meta["committed-sessions"].append("2r")
+        S.save_state(self.dir, meta, recs)
+        self.assertIn("session: 2r2 of 10", S.cmd_begin(self.dir))
+
+    def test_close_advances_everything(self):
+        S.cmd_begin(self.dir)
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("beta", "taught", "intro"),
+                                    ("alpha", "pass", "clean")))
+        S.cmd_close(self.dir, p)
+        header, _ = S.parse_plan(self.dir)
+        self.assertEqual(header["next-session"], "3/10")
+        self.assertEqual(header["sessions-done"], "2")
+        self.assertEqual(header["last-attended"], TODAY)
+        self.assertEqual(self.rec("beta")["status"], "active")
+        self.assertFalse((self.dir / S.SENTINEL).exists())
+
+    def test_close_marks_the_unit_taught_on_its_last_session(self):
+        S.write_plan_header(self.dir, {"next-session": "3/10"})
+        self.add_u2_assets()
+        S.cmd_begin(self.dir)
+        p = self.write_log("2026-07-21-3.md",
+                           log_text("3", ("alpha", "rubric-pass", "clean")))
+        S.cmd_close(self.dir, p)
+        _, units = S.parse_plan(self.dir)
+        self.assertEqual(units[0]["status"], "taught")
+
+    def test_a_repair_close_does_not_advance_the_counter(self):
+        self.set_meta(**{"repair-pending": "alpha"})
+        S.cmd_begin(self.dir)
+        p = self.write_log("2026-07-21-2r.md",
+                           log_text("2r", ("alpha", "pass", "repaired")))
+        S.cmd_close(self.dir, p)
+        header, _ = S.parse_plan(self.dir)
+        self.assertEqual(header["next-session"], "2/10")
+        self.assertEqual(header["sessions-done"], "2")
+        self.assertEqual(self.state()[0]["repair-pending"], "none")
+
+    def test_close_refuses_a_log_from_a_different_session(self):
+        S.cmd_begin(self.dir)
+        p = self.write_log("2026-07-21-9.md",
+                           log_text("9", ("alpha", "pass", "x")))
+        with self.assertRaisesRegex(S.IntegrityError, "refusing"):
+            S.cmd_close(self.dir, p)
+
+    def test_close_commits_and_leaves_a_clean_tree(self):
+        S.cmd_begin(self.dir)
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "clean")))
+        S.cmd_close(self.dir, p)
+        self.assertFalse(S._dirty(self.dir))
+
+    def test_close_clears_re_entry(self):
+        S.write_plan_header(self.dir, {"re-entry-pending": "yes"})
+        S.cmd_begin(self.dir)
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "x")))
+        S.cmd_close(self.dir, p)
+        self.assertEqual(S.parse_plan(self.dir)[0]["re-entry-pending"], "no")
+
+    def test_two_sessions_in_a_row(self):
+        """State written by one close must be consumable by the next begin."""
+        S.cmd_begin(self.dir)
+        S.cmd_close(self.dir, self.write_log(
+            "2026-07-21-2.md", log_text("2", ("beta", "taught", "x"))))
+        self.add_u2_assets()
+        self.assertIn("type: teach-back", S.cmd_begin(self.dir))
+        S.cmd_close(self.dir, self.write_log(
+            "2026-07-21-3.md", log_text("3", ("alpha", "rubric-pass", "y"))))
+        self.assertEqual(S.parse_plan(self.dir)[0]["next-session"], "4/10")
+
+
+# ============================================================== recover
 
 class TestRecover(CourseCase):
 
-    def setUp(self):
-        super().setUp()
-        git("init", "-q", cwd=self.dir)
-        git("add", "-A", cwd=self.dir)
-        git("commit", "-qm", "base", cwd=self.dir)
+    def stale(self, token="2"):
+        p = self.dir / S.SENTINEL
+        p.write_text(f"session: {token}\n", encoding="utf-8")
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+        return p
 
-    def sentinel(self, session="3", age_hours=0):
-        import datetime as dt
-        ts = (dt.datetime(2026, 7, 20, 12, 0)
-              - dt.timedelta(hours=age_hours)).isoformat()
-        (self.dir / ".session-inprogress").write_text(
-            f"session: {session}\nstarted: {ts}\n")
+    def test_no_repo_is_initialised_not_a_traceback(self):
+        self.assertEqual(S.cmd_recover(self.dir), "initialized")
+        self.assertTrue((self.dir / ".git").exists())
+        self.assertTrue((self.dir / ".gitignore").exists())
 
-    def test_clean_tree_no_sentinel_is_ok(self):
-        self.assertEqual(schedule.cmd_recover(self.dir), "ok")
+    def test_clean_tree_is_ok(self):
+        self.git_init()
+        self.assertEqual(S.cmd_recover(self.dir), "ok")
 
-    def test_fresh_sentinel_means_locked_never_reset(self):
-        self.sentinel(age_hours=0)
-        (self.dir / "plan.md").write_text("dirty")
-        self.assertEqual(schedule.cmd_recover(self.dir), "locked")
-        # nothing was destroyed
-        self.assertEqual((self.dir / "plan.md").read_text(), "dirty")
+    def test_fresh_sentinel_locks(self):
+        self.git_init()
+        (self.dir / S.SENTINEL).write_text("session: 2\n", encoding="utf-8")
+        self.assertEqual(S.cmd_recover(self.dir), "locked")
 
-    def test_stale_sentinel_with_grade_log_replays_and_commits(self):
-        # a completed-but-uncommitted close: grades log exists
-        (self.dir / "log" / "2026-07-20-3.md").write_text(
-            "session: 3\n- grade: alpha | result: pass | note:\n")
-        self.sentinel(session="3", age_hours=6)
-        self.assertEqual(schedule.cmd_recover(self.dir), "replayed")
-        self.assertFalse((self.dir / ".session-inprogress").exists())
-        # grades applied and committed
-        self.assertEqual(self.record("alpha")["interval"], 3)
-        out = subprocess.run(["git", "status", "--porcelain"],
-                             cwd=self.dir, capture_output=True, text=True)
-        self.assertEqual(out.stdout.strip(), "")
+    def test_age_comes_from_mtime_not_an_agent_timestamp(self):
+        """No clock, timezone, or agent-written string may enter this."""
+        self.git_init()
+        (self.dir / S.SENTINEL).write_text(
+            "session: 2\nstarted: nonsense-not-a-date\n", encoding="utf-8")
+        self.assertEqual(S.cmd_recover(self.dir), "locked")
 
-    def test_stale_sentinel_without_log_resets(self):
-        self.sentinel(session="3", age_hours=6)
-        (self.dir / "plan.md").write_text("half-written garbage")
-        self.assertEqual(schedule.cmd_recover(self.dir), "reset")
-        self.assertIn("course-status: active",
-                      (self.dir / "plan.md").read_text())
-        self.assertFalse((self.dir / ".session-inprogress").exists())
+    def test_stale_with_a_log_replays(self):
+        self.git_init()
+        self.write_log("2026-07-21-2.md",
+                       log_text("2", ("alpha", "pass", "clean")))
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "replayed")
+        self.assertEqual(self.rec("alpha")["interval"], 3)
+        self.assertFalse((self.dir / S.SENTINEL).exists())
+
+    def test_replay_of_an_already_committed_log_is_harmless(self):
+        self.git_init()
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "clean")))
+        S.cmd_commit_grades(self.dir, p)
+        iv = self.rec("alpha")["interval"]
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "replayed")
+        self.assertEqual(self.rec("alpha")["interval"], iv)
+
+    def test_stale_with_no_log_resets(self):
+        self.git_init()
+        (self.dir / "scratch.md").write_text("debris", encoding="utf-8")
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "reset")
+        self.assertFalse((self.dir / "scratch.md").exists())
+
+    def test_an_unusable_log_falls_back_to_reset(self):
+        self.git_init()
+        self.write_log("2026-07-21-2.md",
+                       log_text("2", ("ghost", "pass", "unknown id")))
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "reset")
+        self.assertFalse((self.dir / S.SENTINEL).exists())
+
+    def test_an_unparseable_token_never_destroys_anything(self):
+        """'2/10' used to glob nothing and reset a finished session away."""
+        self.git_init()
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "clean")))
+        self.stale("2/10")
+        self.assertEqual(S.cmd_recover(self.dir), "locked")
+        self.assertTrue(p.exists())
+
+    def test_recovery_never_touches_a_parent_repo(self):
+        """reset --hard used to revert the whole enclosing repository."""
+        parent = Path(tempfile.mkdtemp(prefix="elenchus-parent-"))
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        subprocess.run(["git", "init", "-q"], cwd=parent, check=True)
+        thesis = parent / "thesis.md"
+        thesis.write_text("v1 committed\n", encoding="utf-8")
+        course = parent / "course"
+        shutil.copytree(self.dir, course)
+        S._git(parent, "add", "-A")
+        S._git(parent, "commit", "-q", "-m", "base")
+        thesis.write_text("v2 THREE HOURS OF UNCOMMITTED EDITS\n",
+                          encoding="utf-8")
+        p = course / S.SENTINEL
+        p.write_text("session: 2\n", encoding="utf-8")
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+        self.assertEqual(S.cmd_recover(course), "reset")
+        self.assertIn("THREE HOURS", thesis.read_text(encoding="utf-8"))
+
+    def test_commits_are_scoped_to_the_course_subtree(self):
+        parent = Path(tempfile.mkdtemp(prefix="elenchus-parent2-"))
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        subprocess.run(["git", "init", "-q"], cwd=parent, check=True)
+        (parent / "unrelated.md").write_text("mine\n", encoding="utf-8")
+        course = parent / "course"
+        shutil.copytree(self.dir, course)
+        S._git(parent, "add", "-A")
+        S._git(parent, "commit", "-q", "-m", "base")
+        (parent / "unrelated.md").write_text("edited, not staged\n",
+                                             encoding="utf-8")
+        S.cmd_begin(course)
+        log = course / "log" / "2026-07-21-2.md"
+        log.write_text(log_text("2", ("alpha", "pass", "x")),
+                       encoding="utf-8")
+        S.cmd_close(course, log)
+        self.assertIn("unrelated.md",
+                      S._git(parent, "status", "--porcelain").stdout)
+
+
+# ================================================================== CLI
+
+class TestCLI(CourseCase):
+
+    def test_check_prints_ok(self):
+        r = self.cli("check")
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "ok"))
+
+    def test_integrity_error_is_exit_2_with_no_traceback(self):
+        self.set_record("alpha", verify="use")
+        r = self.cli("check")
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr.startswith("ERROR:"))
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_missing_file_is_exit_2_with_no_traceback(self):
+        (self.dir / "plan.md").unlink()
+        r = self.cli("check")
+        self.assertEqual(r.returncode, 2)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_missing_logfile_is_exit_2_with_no_traceback(self):
+        r = self.cli("close", "log/nope.md")
+        self.assertEqual(r.returncode, 2)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_recover_off_repo_is_exit_0_not_a_traceback(self):
+        r = self.cli("recover")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "initialized")
+
+    def test_begin_and_close_round_trip_through_the_cli(self):
+        self.assertEqual(self.cli("begin").returncode, 0)
+        self.write_log("2026-07-21-2.md",
+                       log_text("2", ("alpha", "pass", "clean")))
+        r = self.cli("close", "log/2026-07-21-2.md")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("next: 3/10", r.stdout)
+
+    def test_close_accepts_an_absolute_log_path(self):
+        self.cli("begin")
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "clean")))
+        self.assertEqual(self.cli("close", str(p)).returncode, 0)
+
+    def test_report_never_crashes(self):
+        r = self.cli("report")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("due today", r.stdout)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,19 @@
+> **SUPERSEDED — do not execute this document.**
+>
+> This is the v2.1 design spec, kept for the design history. The system
+> was then built, reviewed by a third adversarial panel, and changed in
+> ways this file does not reflect: mastery bands, `ceiling`, `reprobe`
+> and `solid-pending` were deleted (mastery is derived, not stored);
+> dispatch and the close moved into `schedule.py` as `begin` and `close`;
+> the unit-review session type was folded into teach-back; consolidation
+> sessions were added at the end of the course. Several statements here
+> are now simply wrong — most sharply, it has the agent writing a `solid`
+> grade line, which no longer exists.
+>
+> **The executable spec is `SKILL.md`, `bootstrap.md`, `checkpoint.md`,
+> `templates/`, `tests/test_schedule.py`, and `example-course/`.**
+> See `CRITIQUE-R3.md` for what changed and why.
+
 # Tutor — Consolidated Spec (v2.1)
 
 A chat-based AI tutoring skill that teaches a single user one topic across a
