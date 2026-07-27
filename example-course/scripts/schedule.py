@@ -1105,6 +1105,19 @@ def _next_token(idx: int, kind: str, committed) -> str:
     raise IntegrityError(f"session {idx} has been repaired 49 times")
 
 
+def course_label(course: Path) -> str:
+    """Short human name for this course — disambiguates several courses
+    sharing one chat. `name:` in domain-map.md wins; otherwise the
+    directory basename, prettified."""
+    try:
+        n = _map_header(course).get("name", "").strip()
+        if n:
+            return n
+    except Exception:
+        pass
+    return Path(course).resolve().name.replace("-", " ").replace("_", " ")
+
+
 def _last_log(course: Path):
     """(path, token, date, open_question) for the newest session log."""
     logs = sorted((Path(course) / "log").glob("*.md"))
@@ -1152,6 +1165,7 @@ def cmd_begin(course: Path):
     ids = cmd_queue(course, cap=d["cap"], terminal=d["terminal"])
     _, records = load_state(course)
     lines = [f"recover: {state}",
+             f"course: {course_label(course)}",
              f"session: {token} of {d['size']}",
              f"type: {d['type']}  ({d['why']})"]
     if d.get("concept"):

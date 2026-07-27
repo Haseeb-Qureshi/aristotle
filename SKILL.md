@@ -31,6 +31,7 @@ decides the session type, and prints your brief:
 
 ```
 recover: ok
+course: AI economics
 session: 14 of 30
 type: standard  (session 2 of unit 4)
 unit: 4 — When is a moat not a moat?
@@ -70,11 +71,14 @@ time, which is the most useful thing you can know before you start.
 and ask them to guess *before* you explain — a wrong guess primes the
 correction.
 
-**Bookend the session.** Begin your first message with `Session N —`
-and begin the goodnight line with `Next time:`. Both are things a good
+**Bookend the session.** Begin your first message with
+`<course> · Session N —` (the `course:` line `begin` printed) and begin
+the goodnight line with `Next time (<course>):`. Both are things a good
 tutor writes anyway, and together they make the conversation itself
-recoverable: a `Session N —` with no matching `Next time:` is an
-abandoned session, and everything between them is what was covered.
+recoverable: a `<course> · Session N —` with no matching
+`Next time (<course>):` is an abandoned session, and everything between
+them is what was covered. **The course label is what keeps this working
+when several courses share one chat** — never drop it.
 That is what lets a future run reconstruct a lesson whose log was never
 written (see `scheduling.md`). Keep them plain — no ids, no tokens.
 
@@ -152,7 +156,8 @@ keep talking.** A closed session followed by more conversation is a
 success; an open session that peters out is a lost lesson. When in
 doubt, close early.
 
-1. **Say goodnight** — two lines starting with `Next time:`: the one
+1. **Say goodnight** — two lines starting with `Next time (<course>):`:
+   the one
    thing they got today, and the open question as a teaser. This is the
    last *teaching* message, and its prefix closes the bookend.
    Everything below this is silent.

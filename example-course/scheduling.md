@@ -124,13 +124,29 @@ course before saying a word. With it, three.
 ## Multiple courses, one chat
 
 Several scheduled courses delivering into the same conversation is
-normal and safe — each course directory is independent state, and
-`begin`/`close` are atomic and idempotent per course. Two cautions:
+normal and safe *as state* — each course directory is independent, and
+`begin`/`close` are atomic and idempotent per course. Nothing one course
+does can corrupt another.
 
+What does collide is everything that lives in the **shared chat**:
+
+- **Label every marker.** The session bookends (`SKILL.md` §2) carry the
+  course label — `AI economics · Session 7 —` — precisely so that
+  reconciliation can tell two courses' sessions apart in one transcript.
+  An unlabelled `Session 7 —` is ambiguous the moment a second course
+  exists, and reconstruction will attribute the wrong lesson to the
+  wrong course. `begin` prints the label; use it verbatim.
+- **Name the course in the nudge**, for the same reason plus the obvious
+  one: "Session 7" means nothing to a user running three courses.
+- **One pointer file per course** (`<course>-next.md`), never a shared
+  one.
 - **Stagger the trigger times.** Two nudges arriving together train the
   user to ignore both.
-- **Name the course in the nudge.** "Session 7" is ambiguous when three
-  courses are running.
+- **Accept that a live session can be interrupted.** If course B's nudge
+  lands while course A is mid-session and the user switches, A's
+  sentinel goes stale and A's lesson is reconstructed or discarded on
+  its next run — the normal abandonment path, no corruption. Staggering
+  makes this rare; nothing needs to prevent it.
 
 ## Failure modes this survives
 

@@ -994,6 +994,16 @@ class TestBeginClose(CourseCase):
         self.assertIn("quiz these", out)
         self.assertTrue((self.dir / S.SENTINEL).exists())
 
+    def test_course_label_disambiguates_courses_in_one_chat(self):
+        """Two courses sharing a chat must produce different bookend
+        labels, or reconciliation attributes lessons to the wrong one."""
+        self.assertIn("aristotle test", S.course_label(self.dir))
+        p = self.dir / "domain-map.md"
+        p.write_text("name: AI economics\n" + p.read_text(encoding="utf-8"),
+                     encoding="utf-8")
+        self.assertEqual(S.course_label(self.dir), "AI economics")
+        self.assertIn("course: AI economics", S.cmd_begin(self.dir))
+
     def test_begin_surfaces_the_last_open_question(self):
         """Continuity: the hook the previous close wrote must reach the
         next session without the tutor having to go find it."""

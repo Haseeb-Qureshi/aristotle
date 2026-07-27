@@ -1,3 +1,4 @@
+name: Espresso
 topic: Espresso — extraction theory for people who own a machine
 terminal-task: diagnose a bad shot from taste and timing alone, and name
   the single variable to change next
