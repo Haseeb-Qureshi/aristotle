@@ -994,6 +994,33 @@ class TestBeginClose(CourseCase):
         self.assertIn("quiz these", out)
         self.assertTrue((self.dir / S.SENTINEL).exists())
 
+    def test_begin_surfaces_the_last_open_question(self):
+        """Continuity: the hook the previous close wrote must reach the
+        next session without the tutor having to go find it."""
+        S.cmd_begin(self.dir)
+        self.write_log("2026-07-21-2.md",
+                       log_text("2", ("alpha", "pass", "x"),
+                                extra="why does the cheap one win?"))
+        S.cmd_close(self.dir, self.dir / "log" / "2026-07-21-2.md")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("last session: 2 on 2026-07-21", out)
+        self.assertIn("why does the cheap one win?", out)
+
+    def test_begin_flags_an_abandoned_session(self):
+        """A mid-teach abandonment must not look identical to a clean
+        finish — the tutor would re-open with the same hook."""
+        S.cmd_begin(self.dir)                      # writes the sentinel
+        p = self.dir / S.SENTINEL
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+        out = S.cmd_begin(self.dir)                # recover -> reset
+        self.assertIn("abandoned before it closed", out)
+        self.assertIn("~5h ago", out)
+
+    def test_begin_is_quiet_when_nothing_was_abandoned(self):
+        out = S.cmd_begin(self.dir)
+        self.assertNotIn("abandoned", out)
+
     def test_begin_refuses_when_a_session_is_live(self):
         S.cmd_begin(self.dir)
         with self.assertRaisesRegex(S.IntegrityError, "live"):

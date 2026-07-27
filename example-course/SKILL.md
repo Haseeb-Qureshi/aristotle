@@ -37,11 +37,28 @@ unit: 4 — When is a moat not a moat?
 assets: assets/unit-04.md
 untaught here: switching-costs, data-network-effects
 quiz these (3): inference-cost, gross-margin, scale-economies
+last session: 13 on 2026-05-04 (2 days ago)
+open question: why is the cheapest chip in the rack the one nobody can buy?
 ```
 
 If it errors, **stop and send the user nothing** — a broken course is an
 operator problem, not a lesson. Fix it if it's an asset file you wrote;
 otherwise leave the course alone and stay quiet.
+
+**Pick up where they left off.** `last session` and `open question` are
+your continuity — that question was written at the last close *to be*
+today's way in. Use it. If the gap is long, say nothing about the gap
+(see `re-entry`); if it's short, just continue the thread.
+
+`begin` may also print a **NOTE:**, and it changes how you open:
+
+- *"a session was started ~Nh ago and abandoned before it closed"* —
+  they were mid-lesson and drifted off. Nothing was recorded, so this
+  session repeats it. **Do not replay the same opener.** Ask what stuck
+  from last time and start from there; re-teaching verbatim is how you
+  teach someone you weren't listening.
+- *"the previous session's close was recovered just now"* — a finished
+  session's grades only just landed. Nothing to do; the queue is right.
 
 Then read the unit's `assets/` file, its `sources/` notes, and
 `knowledge-state.md` — the `note:` column holds what they got wrong last

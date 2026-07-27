@@ -1105,9 +1105,32 @@ def _next_token(idx: int, kind: str, committed) -> str:
     raise IntegrityError(f"session {idx} has been repaired 49 times")
 
 
+def _last_log(course: Path):
+    """(path, token, date, open_question) for the newest session log."""
+    logs = sorted((Path(course) / "log").glob("*.md"))
+    if not logs:
+        return None
+    path = logs[-1]
+    m = re.match(r"(\d{4}-\d\d-\d\d)-(.+)\.md$", path.name)
+    date, token = (m.group(1), m.group(2)) if m else ("", "")
+    text = _read(path)
+    q = ""
+    m = re.search(r"^##+\s*open question\s*$(.*?)(?=^##\s|\Z)",
+                  text, re.M | re.I | re.S)
+    if m:
+        q = " ".join(m.group(1).split())
+    return path, token, date, q
+
+
 def cmd_begin(course: Path):
     """Everything before the first word to the user, in one call."""
     course = Path(course)
+    # capture the abandoned session's age BEFORE recover clears the sentinel
+    sentinel = course / SENTINEL
+    abandoned_age = None
+    if sentinel.exists():
+        abandoned_age = _now() - dt.datetime.fromtimestamp(
+            sentinel.stat().st_mtime)
     state = cmd_recover(course)
     if state == "locked":
         raise IntegrityError(
@@ -1145,6 +1168,34 @@ def cmd_begin(course: Path):
     lines.append(f"quiz these ({len(ids)}): {', '.join(ids) or '-'}")
     if d["author"]:
         lines.append(f"author-after-close: {d['author']}")
+
+    # --- continuity: where the learner actually left off -------------
+    last = _last_log(course)
+    if last:
+        _, tok, date, question = last
+        gap = ""
+        if date:
+            try:
+                days = (_today(course) - dt.date.fromisoformat(date)).days
+                gap = ("today" if days == 0 else "yesterday" if days == 1
+                       else f"{days} days ago")
+            except ValueError:
+                pass
+        lines.append(f"last session: {tok} on {date}"
+                     + (f" ({gap})" if gap else ""))
+        if question:
+            lines.append(f"open question: {question}")
+    if state == "reset" and abandoned_age is not None:
+        hrs = int(abandoned_age.total_seconds() // 3600)
+        lines.append(
+            f"NOTE: a session was started ~{hrs}h ago and abandoned before "
+            "it closed — nothing was recorded, so this session repeats it. "
+            "They may remember part of it: open differently, and check what "
+            "already landed before re-teaching it.")
+    elif state == "replayed":
+        lines.append(
+            "NOTE: the previous session's close was recovered just now — "
+            "its grades have only just been applied.")
     return "\n".join(lines)
 
 
