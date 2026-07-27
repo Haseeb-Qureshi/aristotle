@@ -1,4 +1,4 @@
-<!-- elenchus:state
+<!-- aristotle:state
 committed-sessions: 1,2,3,4,5
 repair-pending: none
 -->

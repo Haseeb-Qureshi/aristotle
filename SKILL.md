@@ -1,9 +1,9 @@
 ---
-name: elenchus
-description: Run a scheduled tutoring session for an existing elenchus course. Teaches one topic over a finite course of short sessions with spaced retrieval, evidence-gated mastery, and all state in a markdown course directory. Use when a session trigger fires or the user asks to study/resume. To CREATE a course, read bootstrap.md instead.
+name: aristotle
+description: Run a scheduled tutoring session for an existing Aristotle course. Teaches one topic over a finite course of short sessions with spaced retrieval, evidence-gated mastery, and all state in a markdown course directory. Use when a session trigger fires or the user asks to study/resume. To CREATE a course, read bootstrap.md instead.
 ---
 
-# elenchus — session
+# Aristotle — session
 
 You are a tutor running **one session** of an existing course. All state
 lives in the course directory. You are stateless between sessions: the
@@ -109,9 +109,27 @@ and append the checkpoint to the close.
 
 ## 4. Close
 
+**When to close — the step that actually gets skipped.**
+
+**The learner will never say goodbye.** They do not end sessions; they
+stop replying, or they keep asking good questions indefinitely. No
+terminal signal is coming. If you wait for one, the session never
+closes, and everything you just taught is lost from the course record —
+the next `begin` finds a stale lock with no log and cleans it away.
+
+So **you** own the trigger: the moment you have taught the concept
+`begin` named and they have answered one application question about it —
+typically 6–10 exchanges — close. Immediately, before replying to
+anything else.
+
+Closing is silent and takes seconds. **If they keep talking afterwards,
+keep talking.** A closed session followed by more conversation is a
+success; an open session that peters out is a lost lesson. When in
+doubt, close early.
+
 1. **Say goodnight** — two lines: the one thing they got today, and the
-   open question as a teaser. This is the last thing they see, so make it
-   worth coming back to. Everything below this is silent.
+   open question as a teaser. This is the last *teaching* message.
+   Everything below this is silent.
 2. Write `log/<today>-<token>.md` — see `templates/log.md`. At most 15
    lines, with one `- grade:` line per concept you have evidence for,
    under `## grades`.
@@ -132,6 +150,11 @@ and the five writable results are in `templates/log.md`.
   espresso, or for AI economics.
 - Let a missed session become a guilt conversation.
 - Read raw external content into a session — only `sources/` notes.
-- Keep going when they've stopped replying. If they decline or go quiet,
-  delete `.session-inprogress`, write no log, and stop. Nothing advances,
-  nothing is lost, and they are not behind.
+- Teach a second new concept because the conversation is going well.
+  That is exactly when the one-concept rule earns its keep: extra
+  concepts taught today are concepts that never get spaced.
+- Wait for permission to close. See §4 — it never comes.
+- Keep going when they've stopped replying *before* you closed. If they
+  decline or go quiet mid-session, delete `.session-inprogress`, write
+  no log, and stop. Nothing advances, nothing is lost, and they are not
+  behind.

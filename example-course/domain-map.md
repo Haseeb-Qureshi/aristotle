@@ -6,7 +6,7 @@ timezone: America/Los_Angeles
 sessions: 12
 
 <!-- A deliberately tiny course (12 sessions, 7 concepts) whose only job
-     is to be a complete, valid, readable instance of the elenchus
+     is to be a complete, valid, readable instance of the Aristotle
      format. A real course runs 20-50 sessions with ~0.75x concepts. -->
 
 ### extraction-yield

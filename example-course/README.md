@@ -1,6 +1,6 @@
 # Course: Espresso extraction
 
-An **elenchus** course directory. Everything about this course — the
+An **Aristotle** course directory. Everything about this course — the
 curriculum, what the learner knows, every session's record — is in these
 files. There is no state anywhere else.
 
@@ -38,7 +38,7 @@ this directory alone, something is missing and should be fixed here.
 
 ## Note
 
-This is the **bundled example** shipped with elenchus: a real, valid,
+This is the **bundled example** shipped with Aristotle: a real, valid,
 12-session course kept deliberately small so the file formats are
 readable end to end. It is mid-flight — 5 sessions done, unit 1 taught,
 unit 2 in progress, one concept carrying a recorded miss — so most states

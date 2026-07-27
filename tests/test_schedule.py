@@ -1,4 +1,4 @@
-"""Tests for the elenchus deterministic core.
+"""Tests for the Aristotle deterministic core.
 
 Every defect the round-3 review panel proved by execution has a test here.
 Tests assert BEHAVIOUR — what a course does — rather than parser internals:
@@ -90,7 +90,7 @@ status: untouched
 """
 
 STATE_MD = """\
-<!-- elenchus:state
+<!-- aristotle:state
 committed-sessions: 1
 repair-pending: none
 -->
@@ -106,7 +106,7 @@ interval: 0 | fails: 0 | note:
 """
 
 ASSETS_U1 = """\
-<!-- elenchus:assets unit: 01 -->
+<!-- aristotle:assets unit: 01 -->
 
 ## concept: alpha
 - quiz: What does alpha name? | a: the first thing | distractor: M1
@@ -125,7 +125,7 @@ ASSETS_U1 = """\
 """
 
 ASSETS_U2 = """\
-<!-- elenchus:assets unit: 02 -->
+<!-- aristotle:assets unit: 02 -->
 
 ## concept: gamma
 - apply: use gamma on the case below
@@ -155,7 +155,7 @@ class CourseCase(unittest.TestCase):
     """A valid mid-flight course in a temp dir."""
 
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp(prefix="elenchus-test-"))
+        self.dir = Path(tempfile.mkdtemp(prefix="aristotle-test-"))
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         (self.dir / "domain-map.md").write_text(MAP_MD, encoding="utf-8")
         (self.dir / "plan.md").write_text(PLAN_MD, encoding="utf-8")
@@ -165,9 +165,9 @@ class CourseCase(unittest.TestCase):
         (self.dir / "assets" / "unit-01.md").write_text(ASSETS_U1,
                                                         encoding="utf-8")
         (self.dir / "log").mkdir()
-        os.environ["ELENCHUS_TODAY"] = TODAY
-        self.addCleanup(os.environ.pop, "ELENCHUS_TODAY", None)
-        self.addCleanup(os.environ.pop, "ELENCHUS_NOW", None)
+        os.environ["ARISTOTLE_TODAY"] = TODAY
+        self.addCleanup(os.environ.pop, "ARISTOTLE_TODAY", None)
+        self.addCleanup(os.environ.pop, "ARISTOTLE_NOW", None)
 
     # helpers -----------------------------------------------------------
     def state(self):
@@ -1166,7 +1166,7 @@ class TestRecover(CourseCase):
 
     def test_recovery_never_touches_a_parent_repo(self):
         """reset --hard used to revert the whole enclosing repository."""
-        parent = Path(tempfile.mkdtemp(prefix="elenchus-parent-"))
+        parent = Path(tempfile.mkdtemp(prefix="aristotle-parent-"))
         self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
         subprocess.run(["git", "init", "-q"], cwd=parent, check=True)
         thesis = parent / "thesis.md"
@@ -1185,7 +1185,7 @@ class TestRecover(CourseCase):
         self.assertIn("THREE HOURS", thesis.read_text(encoding="utf-8"))
 
     def test_commits_are_scoped_to_the_course_subtree(self):
-        parent = Path(tempfile.mkdtemp(prefix="elenchus-parent2-"))
+        parent = Path(tempfile.mkdtemp(prefix="aristotle-parent2-"))
         self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
         subprocess.run(["git", "init", "-q"], cwd=parent, check=True)
         (parent / "unrelated.md").write_text("mine\n", encoding="utf-8")

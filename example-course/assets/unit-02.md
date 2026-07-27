@@ -1,4 +1,4 @@
-<!-- elenchus:assets unit: 02 -->
+<!-- aristotle:assets unit: 02 -->
 
 ## concept: sour-vs-bitter
 - quiz: Sour points to which extraction problem, and bitter to which? | a: sour = under-extracted (too little pulled out); bitter = over-extracted (too much, including the harsh late compounds) | distractor: M1

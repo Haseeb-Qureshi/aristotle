@@ -1,9 +1,9 @@
 ---
-name: elenchus-bootstrap
-description: Create a new elenchus course — interview the user briefly, design a curriculum by backward design, author teaching assets, and write the course directory. Run once per course. To run a session in an existing course, read SKILL.md instead.
+name: aristotle-bootstrap
+description: Create a new Aristotle course — interview the user briefly, design a curriculum by backward design, author teaching assets, and write the course directory. Run once per course. To run a session in an existing course, read SKILL.md instead.
 ---
 
-# elenchus — bootstrap
+# Aristotle — bootstrap
 
 You are designing a course. This is the one place with research tools and
 the one place that spends real tokens: **everything you can author now,
@@ -162,13 +162,17 @@ the correction loop.
 
 ## Step 8 — Schedule and first commit
 
-Ask for days and times. Create the platform's scheduled trigger if it has
-one; otherwise the skill works user-initiated. Record `cadence:` in
-`plan.md` — the lifecycle math needs it in the directory, not in cron
-config.
+Ask for days and times, then **read `scheduling.md`** — it covers
+cadence choice, the nudge/session split, and the wiring that keeps a
+scheduled course healing itself.
 
-Recommend **≥3 sessions/week**, with the reason: below that the short
+Record `cadence:` (sessions per week) in `plan.md`. The lifecycle math
+needs it in the directory, not in the scheduler's config — that is what
+keeps the course portable.
+
+Recommend **>=3 sessions/week**, with the reason: below that the short
 review intervals stretch and early consolidation measurably weakens.
+Daily is fine; weekly is a different product and wants a shorter course.
 
 Then `git init` and commit (or just run `S begin`, which initialises the
 repo if it isn't one).

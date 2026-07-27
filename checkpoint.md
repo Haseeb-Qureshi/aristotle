@@ -1,4 +1,4 @@
-# elenchus — checkpoint, adjudication, lifecycle
+# Aristotle — checkpoint, adjudication, lifecycle
 
 Read when `S begin` prints `type: lifecycle`, `dormant` or `graduation`,
 or when `sessions-done` is a positive multiple of 7.

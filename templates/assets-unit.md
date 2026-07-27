@@ -19,7 +19,7 @@
      Long values may wrap: an indented continuation line is appended to
      the item above it.
 -->
-<!-- elenchus:assets unit: NN -->
+<!-- aristotle:assets unit: NN -->
 
 ## concept: concept-id
 - quiz: <question, cold-retrievable in one line> | a: <expected answer> | distractor: M1

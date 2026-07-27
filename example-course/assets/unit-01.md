@@ -1,4 +1,4 @@
-<!-- elenchus:assets unit: 01 -->
+<!-- aristotle:assets unit: 01 -->
 
 ## concept: extraction-yield
 - quiz: Two shots use the same dose. One runs 18s, one runs 32s. Which has the higher extraction yield, and why? | a: the 32s shot — longer contact dissolves a larger fraction of the bean's solubles, independent of how strong it tastes | distractor: M1

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""elenchus schedule.py — the deterministic core.
+"""Aristotle schedule.py — the deterministic core.
 
 Owns everything the teaching agent must never improvise: date arithmetic,
 the mastery transition table, session dispatch, the review queue, integrity
@@ -27,7 +27,7 @@ State ownership: knowledge-state.md and plan.md's header are written ONLY
 by this script. Mastery is DERIVED from interval and fails, never stored —
 there is no band to inflate.
 
-Test hooks: ELENCHUS_TODAY (YYYY-MM-DD) pins "today"; ELENCHUS_NOW pins
+Test hooks: ARISTOTLE_TODAY (YYYY-MM-DD) pins "today"; ARISTOTLE_NOW pins
 the recovery clock.
 """
 
@@ -85,7 +85,7 @@ def _strip_comments(text: str) -> str:
 # --------------------------------------------------------------- clock
 
 def _today(course: Path) -> dt.date:
-    env = os.environ.get("ELENCHUS_TODAY")
+    env = os.environ.get("ARISTOTLE_TODAY")
     if env:
         return dt.date.fromisoformat(env)
     tz = _map_header(course).get("timezone")
@@ -101,7 +101,7 @@ def _today(course: Path) -> dt.date:
 def _now() -> dt.datetime:
     """Wall clock, naive local. Only ever compared against a file mtime
     from the same machine, so no timezone can enter the comparison."""
-    env = os.environ.get("ELENCHUS_NOW")
+    env = os.environ.get("ARISTOTLE_NOW")
     if env:
         return dt.datetime.fromisoformat(env)
     return dt.datetime.now()
@@ -110,14 +110,15 @@ def _now() -> dt.datetime:
 # ------------------------------------------------- knowledge-state file
 
 STATE_FILE = "knowledge-state.md"
-HEADER_RE = re.compile(r"<!-- elenchus:state\n(.*?)\n-->\n?", re.S)
+# legacy "elenchus:state" is still accepted on read; we always write the new one
+HEADER_RE = re.compile(r"<!-- (?:aristotle|elenchus):state\n(.*?)\n-->\n?", re.S)
 
 
 def parse_state(text: str):
     """Return (meta, records). Loud on any format or VALUE violation."""
     m = HEADER_RE.search(text)
     if not m:
-        raise FormatError("knowledge-state.md missing elenchus:state header")
+        raise FormatError("knowledge-state.md missing aristotle:state header")
     meta = {"committed-sessions": [], "repair-pending": "none"}
     for line in m.group(1).splitlines():
         line = line.strip()
@@ -176,7 +177,7 @@ def parse_state(text: str):
 
 
 def serialize_state(meta, records) -> str:
-    head = ["<!-- elenchus:state",
+    head = ["<!-- aristotle:state",
             "committed-sessions: " + ",".join(meta["committed-sessions"]),
             f"repair-pending: {meta['repair-pending']}",
             "-->",
@@ -1006,8 +1007,8 @@ def cmd_report(course: Path):
 
 def _git(course, *args, check=True):
     return subprocess.run(
-        ["git", "-c", "user.name=elenchus", "-c",
-         "user.email=elenchus@localhost", *args],
+        ["git", "-c", "user.name=aristotle", "-c",
+         "user.email=aristotle@localhost", *args],
         cwd=course, check=check, capture_output=True, text=True)
 
 
@@ -1024,7 +1025,7 @@ def _ensure_repo(course: Path) -> bool:
     if not gi.exists():
         _write(gi, f"{SENTINEL}\n*.tmp\n__pycache__/\n")
     _git(course, "add", "-A", "--", ".")
-    _git(course, "commit", "-q", "-m", "elenchus: course directory")
+    _git(course, "commit", "-q", "-m", "aristotle: course directory")
     return True
 
 
