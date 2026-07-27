@@ -70,6 +70,14 @@ time, which is the most useful thing you can know before you start.
 and ask them to guess *before* you explain — a wrong guess primes the
 correction.
 
+**Bookend the session.** Begin your first message with `Session N —`
+and begin the goodnight line with `Next time:`. Both are things a good
+tutor writes anyway, and together they make the conversation itself
+recoverable: a `Session N —` with no matching `Next time:` is an
+abandoned session, and everything between them is what was covered.
+That is what lets a future run reconstruct a lesson whose log was never
+written (see `scheduling.md`). Keep them plain — no ids, no tokens.
+
 **Then the retrieval block.** Quiz exactly the concepts `begin` listed,
 cold, from the stored items. Vary the wording and the case each time:
 grade against the stored *answer*, not the stored *question*. Asking the
@@ -144,8 +152,9 @@ keep talking.** A closed session followed by more conversation is a
 success; an open session that peters out is a lost lesson. When in
 doubt, close early.
 
-1. **Say goodnight** — two lines: the one thing they got today, and the
-   open question as a teaser. This is the last *teaching* message.
+1. **Say goodnight** — two lines starting with `Next time:`: the one
+   thing they got today, and the open question as a teaser. This is the
+   last *teaching* message, and its prefix closes the bookend.
    Everything below this is silent.
 2. Write `log/<today>-<token>.md` — see `templates/log.md`. At most 15
    lines, with one `- grade:` line per concept you have evidence for,

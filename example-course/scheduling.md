@@ -79,9 +79,13 @@ Symptom, checkable without any history: `.session-inprogress` exists, is
 in that sentinel's token**.
 
 If your platform can search past conversations, reconstruct rather than
-discard:
+discard. **Sessions are bookended for exactly this** (`SKILL.md` §2):
+every session opens `Session N —` and its goodnight opens `Next time:`.
+So the search is deterministic, not a guess about topic words:
 
-1. Search history for the session's actual content.
+1. Search history for the last `Session N —`. If no `Next time:`
+   follows it, that session was abandoned, and the messages between the
+   marker and the end of the thread are what was actually covered.
 2. If a real lesson happened, write `log/<date>-<token>.md` from what was
    actually taught and how the learner answered.
 3. **Grade `taught` only — never `pass`, `fail`, or `rubric-*`.** You
@@ -157,7 +161,8 @@ is in this prompt — do not explore. Course dir: $C (it exists).
 2. If $C/.session-inprogress exists and is younger than 2 hours: respond
    [silent] and stop.
    If it is older than 2 hours and no $C/log file matches its token:
-   search conversation history for the lesson; if one happened, write
+   search conversation history for the last "Session N —" with no
+   "Next time:" after it; if one is found, write
    $C/log/<date>-<token>.md (format: $C/templates/log.md, `taught`
    grades only, note "reconstructed"), then run
    python3 $C/scripts/schedule.py --course $C close $C/log/<file>
