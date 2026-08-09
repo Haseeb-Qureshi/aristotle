@@ -21,6 +21,9 @@ artifact-milestone: add a taste column and diagnose three shots in the log
 sources: [unit-02-a]
 status: in-progress
 
+## Review: units 1-2 — taste back to mechanism
+sessions: 1
+
 ## Unit 3: How do you change one thing at a time and actually learn from it?
 sessions: 2
 concepts: [dialing-in]
@@ -29,4 +32,7 @@ artifact-milestone: run a full dial-in from a deliberately bad starting grind
 sources: []
 status: untouched
 
-<!-- 4 + 4 + 2 = 10 of 12 sessions; the last two are consolidation. -->
+<!-- 4 + 4 (review 1) + 2 = 11 of 12. The last session is the terminal
+     synthesis — the artifact, not a second recall block. Reviews are
+     distributed, never stacked at the end: two adjacent review sessions
+     over one small concept pool become the same session twice. -->
