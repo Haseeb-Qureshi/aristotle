@@ -58,6 +58,39 @@ The conclusion that matters for portability: **the procedure transferred
 to a different model family without adaptation.** What did not transfer
 was everything outside the procedure files.
 
+## The session verdict
+
+The course was then taught, twice — once abandoned mid-lesson on
+purpose, then resumed. Every load-bearing behaviour held:
+
+- `begin` dispatched `placement`, and the tutor bounced to the Session-1
+  procedure instead of quizzing cold. It opened with the idea, not an
+  exam: *"A dense loaf is not a diagnosis; it's only a symptom."*
+- Told the learner's guess was "not enough time," it validated the
+  guess and then corrected the frame — *"even excessive fermentation
+  makes dough too weak to retain gas"* — which is `M2` in its own map,
+  reached without being prompted with the id.
+- On resume, `recover: reset` fired with the abandoned-session NOTE, and
+  the tutor said *"I'm recovering it without replaying the old opening;
+  I'll first check what stuck"* — then asked exactly that. The
+  don't-re-teach-verbatim instruction worked on a model that had never
+  seen it before.
+- **It closed itself.** No goodbye was given and none was waited for —
+  the defect the live pilot was built to fix did not recur here.
+- The log it wrote is correct in every field that matters: a `taught`
+  grade with evidence in the note, a real `## asked` ledger mixing bank
+  item ids (`fermentation-readiness.apply1`) with free-text case
+  signatures, and an open question worth reopening on (*"How can two
+  equally dense loaves require opposite corrections?"*).
+- Placement seeded from evidence, not self-report: `retrievable` for
+  what the learner demonstrated, `exposed` and `none` elsewhere — and
+  the verbatim baseline went into `history.md` for the graduation
+  delta.
+
+End to end on a foreign model, with no human in the loop but a scripted
+learner: bootstrap → course → session → abandonment → recovery →
+teach → close → state advance → commit.
+
 ## The ten defects
 
 **1. Skill roots drift, and the stale copy can win.**
