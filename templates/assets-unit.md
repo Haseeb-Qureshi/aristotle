@@ -18,6 +18,12 @@
 
      Long values may wrap: an indented continuation line is appended to
      the item above it.
+
+     Quiz items are SINGLE-USE for the whole course (the asked ledger
+     tracks them) — author enough per concept, and expect later probes
+     to be freshly built cases anyway. Date every perishable figure
+     inline ("as of <month year>") so the runtime tutor knows what to
+     refresh and the learner hears figures with their vintage.
 -->
 <!-- aristotle:assets unit: NN -->
 

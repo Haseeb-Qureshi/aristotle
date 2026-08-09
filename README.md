@@ -132,3 +132,13 @@ a pass may only climb it by the gap it actually survived.** Early
 passes now keep the rung and restart the clock; early fails still step
 down, because failing one day after the last retrieval is worse news,
 not better.
+
+**The author/tutor asymmetry** became explicit when the pilot expanded
+to a full course: the agent that designs a course is usually running
+with more context, more sources, and a stronger model than the agent
+that teaches session 23 on a Tuesday. The course directory is therefore
+a *compilation target* — the expensive model compiles once (map, plan,
+every unit's assets, with perishable figures dated), and the cheap
+model executes ~40 times, refreshing numbers but never redesigning.
+Every piece of judgment pre-baked into the files is a piece the runtime
+tutor cannot get wrong.

@@ -128,7 +128,18 @@ Then work, in order:
      they are the same session twice
    `check` enforces the floor and the fit; if it doesn't fit, cut
    concepts, not sessions.
-7. **Author assets for units 1–2** per `templates/assets-unit.md`.
+7. **Author assets for ALL units now** per `templates/assets-unit.md` —
+   the author/tutor asymmetry: the agent bootstrapping a course is
+   usually running with more context, more sources, and often a
+   stronger model than the agent that will teach session 23 on a
+   Tuesday. Compile once, execute many: the more judgment you pre-bake
+   into assets, the less the runtime tutor improvises. Date every
+   perishable figure ("as of <month year>") — the tutor's job at teach
+   time is to REFRESH numbers, never to redesign concepts. (Authoring
+   only units 1–2 and leaving the rest to `author-after-close` is the
+   fallback for when bootstrap time is genuinely short — accept that
+   those assets will be written by whatever model happens to be
+   running that day.)
    Give every keystone at least one `misconceptions:` entry in the map —
    a keystone with none has nothing for its rubric to warn against.
 8. **Write the directory** (§6), then run `S check` and fix everything it
