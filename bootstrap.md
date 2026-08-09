@@ -120,6 +120,14 @@ Then work, in order:
 4. **Tag 5–8 threshold concepts** — the transformative reframings. They
    get generous time and multiple angles. `reprune` will refuse to drop
    them later, so tag deliberately.
+
+   **A minority, always.** Roughly a quarter of the course, never more
+   than a third; the same restraint applies to `keystones:` in
+   `plan.md` (one or two per unit — a keystone is what the unit's
+   teach-back is *about*). A clean-room run tagged every concept as
+   both, which is the same as tagging none: if everything is
+   transformative, nothing gets the extra time, and every unit's
+   teach-back tries to cover the whole unit in twelve minutes.
 5. **Sequence** within the dependency graph's slack. The graph says
    what's *valid*; craft picks which valid order:
    - the thing they came for goes early — motivation beats logical
