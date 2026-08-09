@@ -98,7 +98,10 @@ tests whether they remember your wording, not whether the idea
 transfers. Grade against the stored *answer*, not the stored *question*,
 and record every question you pose under `## asked` in the log — that
 ledger is the only reason the next session (which remembers nothing)
-won't repeat you.
+won't repeat you. For a session that is *mostly* retrieval (`review`,
+`consolidation`, or any long queue), read
+`references/question-novelty-and-review-spacing.md` first — item types,
+the structural-transfer bar, and what to do when no fresh case exists.
 
 > After **every** item, in the same turn: the right answer, and if they
 > missed, name the misconception they hit **in plain words**. Never say
