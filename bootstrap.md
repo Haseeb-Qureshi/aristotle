@@ -149,16 +149,30 @@ Then work, in order:
 ## Step 6 — Write the course directory
 
 A course directory must be self-sufficient — that is the resurrection
-test. Copy in `scripts/schedule.py`, **`SKILL.md`, `checkpoint.md`, and
-`templates/`**, and write a `.gitignore`:
+test. Copy in `scripts/schedule.py`, **`SKILL.md`, `checkpoint.md`,
+`templates/`, and `references/`** (SKILL.md points into `references/`;
+a course without it has a dangling instruction), and write a
+`.gitignore`:
 
 ```
 course/
   README.md  domain-map.md  plan.md  knowledge-state.md
   history.md  review-queue.md  .gitignore
   log/  assets/  sources/  artifact/
-  scripts/  templates/  SKILL.md  checkpoint.md
+  scripts/  templates/  references/  SKILL.md  checkpoint.md
 ```
+
+Copy `tools/` too if the course was research-ruled and may refresh
+sources later. Do **not** copy `bootstrap.md` or `scheduling.md` into
+the course — bootstrap has already run, and scheduling is the
+operator's concern, not the session's.
+
+The fastest way to get this right is `cp` from the skill install you
+are reading, not retyping files. Never copy `example-course/`'s state
+files as a starting point: its `plan.md`, `knowledge-state.md`, and
+`log/` describe a different, half-finished course, and a stray espresso
+log in a sourdough course is an integrity error at best and a phantom
+session at worst.
 
 `.gitignore` must contain `.session-inprogress`, `*.tmp`, `__pycache__/`.
 
