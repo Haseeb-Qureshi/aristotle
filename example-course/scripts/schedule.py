@@ -1006,6 +1006,21 @@ def course_warnings(course: Path):
                     f"keystone {k!r} declares no misconceptions — its rubric "
                     "has nothing to warn against.")
 
+    # a '## Something' section carrying `sessions:` looks load-bearing and
+    # is not: only 'Unit N:' and 'Review:' consume sessions. A clean-room
+    # bootstrap wrote '## Terminal synthesis' with sessions: 1, which the
+    # parser dropped — harmless there, silently wrong if the count differs
+    plan_text = _strip_comments(_read(course / "plan.md"))
+    for chunk in plan_text.split("\n## ")[1:]:
+        head = chunk.splitlines()[0].strip()
+        if UNIT_RE.match(head) or REVIEW_RE.match(head):
+            continue
+        if re.search(r"^sessions:\s*\d+", chunk, re.M):
+            out.append(
+                f"plan.md section {head!r} declares 'sessions:' but is not a "
+                "'Unit N:' or 'Review:' block, so the scheduler ignores it. "
+                "Rename it, or drop the line so the count is honest.")
+
     for f in ("README.md", "history.md"):
         if not (course / f).exists():
             why = ("a stranger agent has no entry point" if f == "README.md"

@@ -1520,6 +1520,21 @@ class TestCourseWarnings(CourseCase):
         (self.dir / "history.md").write_text("x", encoding="utf-8")
         self.assertEqual(S.course_warnings(self.dir), [])
 
+    def test_ignored_plan_section_claiming_sessions_is_flagged(self):
+        """A clean-room bootstrap wrote '## Terminal synthesis' with a
+        sessions: line. Only Unit/Review blocks consume sessions, so it
+        was silently dropped — honest here, wrong at any other count."""
+        p = self.dir / "plan.md"
+        p.write_text(PLAN_MD + "\n## Terminal synthesis: defend it\n"
+                     "sessions: 1\n", encoding="utf-8")
+        self.assertIn("scheduler ignores it", self.warns())
+
+    def test_prose_sections_without_sessions_are_fine(self):
+        p = self.dir / "plan.md"
+        p.write_text(PLAN_MD + "\n## Review design\nrolling, not stacked\n",
+                     encoding="utf-8")
+        self.assertNotIn("scheduler ignores it", self.warns())
+
     def test_keystone_without_misconceptions_is_flagged(self):
         import re as _re
         stripped = _re.sub(r"misconceptions:\n(?:  M\d+: .*\n)+", "",
