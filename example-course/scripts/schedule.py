@@ -54,7 +54,8 @@ TEACHING_CAP = 3          # cap when the session also teaches new material
 PLATEAU_FAILS = 3
 STALE_HOURS = 2           # a sentinel younger than this means a session is LIVE
 DORMANT_DAYS = 14
-MIN_CONSOLIDATION = 2     # sessions reserved at the end for mixed review
+MIN_CONSOLIDATION = 1     # reserved at the end for the terminal synthesis
+ASKED_RECENCY = 3         # how many logs back `begin` replays asked items
 DATE_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
 
 
@@ -282,6 +283,9 @@ def parse_map(course: Path):
 # ----------------------------------------------------------------- plan
 
 UNIT_RE = re.compile(r"^Unit (\d+):\s*(.*)$")
+# a '## Review: <title>' block occupies sessions like a unit but teaches
+# nothing and owns no assets — rolling mixed review between units
+REVIEW_RE = re.compile(r"^Review(?:\s+\d+)?:\s*(.*)$", re.I)
 PLAN_HEADER_FIELDS = ["course-status", "next-session", "cadence",
                       "sessions-done", "last-attended", "re-entry-pending"]
 
@@ -317,27 +321,38 @@ def parse_plan(course: Path):
     for chunk in text.split("\n## ")[1:]:
         head = chunk.splitlines()[0].strip()
         m = UNIT_RE.match(head)
-        if not m:
+        rm = REVIEW_RE.match(head) if not m else None
+        if not m and not rm:
             continue          # a non-unit '## ' section is not a unit
-        unit = {"num": int(m.group(1)), "title": m.group(2).strip(),
-                "concepts": [], "keystones": [], "status": "untouched",
-                "sessions": 0, "artifact": ""}
-        for line in chunk.splitlines()[1:]:
-            k, sep, v = line.partition(":")
-            k, v = k.strip(), v.strip()
-            if k in ("concepts", "keystones"):
-                unit[k] = [p for p in
-                           re.split(r"[,\s]+", v.strip("[]")) if p]
-            elif k == "status":
-                unit["status"] = v
-            elif k == "sessions":
-                unit["sessions"] = int(v) if v.isdigit() else 0
-            elif k == "artifact-milestone":
-                unit["artifact"] = v
-        if unit["status"] not in UNIT_STATUSES:
-            raise FormatError(f"unit {unit['num']}: status="
-                              f"{unit['status']!r} not in "
-                              f"{sorted(UNIT_STATUSES)}")
+        if rm:
+            unit = {"num": None, "review": True,
+                    "title": rm.group(1).strip() or "mixed review",
+                    "concepts": [], "keystones": [], "status": "-",
+                    "sessions": 1, "artifact": ""}
+            for line in chunk.splitlines()[1:]:
+                k, sep, v = line.partition(":")
+                if k.strip() == "sessions" and v.strip().isdigit():
+                    unit["sessions"] = int(v.strip())
+        else:
+            unit = {"num": int(m.group(1)), "title": m.group(2).strip(),
+                    "concepts": [], "keystones": [], "status": "untouched",
+                    "sessions": 0, "artifact": ""}
+            for line in chunk.splitlines()[1:]:
+                k, sep, v = line.partition(":")
+                k, v = k.strip(), v.strip()
+                if k in ("concepts", "keystones"):
+                    unit[k] = [p for p in
+                               re.split(r"[,\s]+", v.strip("[]")) if p]
+                elif k == "status":
+                    unit["status"] = v
+                elif k == "sessions":
+                    unit["sessions"] = int(v) if v.isdigit() else 0
+                elif k == "artifact-milestone":
+                    unit["artifact"] = v
+            if unit["status"] not in UNIT_STATUSES:
+                raise FormatError(f"unit {unit['num']}: status="
+                                  f"{unit['status']!r} not in "
+                                  f"{sorted(UNIT_STATUSES)}")
         unit["start"] = cursor
         unit["end"] = cursor + unit["sessions"] - 1
         cursor = unit["end"] + 1
@@ -504,6 +519,8 @@ def _next_unit_prereq_ids(course: Path):
     concepts = parse_map(course)
     _, units = parse_plan(course)
     for unit in units:
+        if unit.get("review"):
+            continue          # a review block must not mask the real unit
         if unit["status"] == "untouched":
             needed = set()
             for cid in unit["concepts"]:
@@ -881,9 +898,13 @@ def cmd_check(course: Path):
                     "the unit's own concepts")
 
     # the course must FIT: one session per concept, plus a teach-back,
-    # plus room at the end to consolidate
+    # plus the terminal synthesis session at the end
     size = course_size(header)
     for unit in units:
+        if unit.get("review"):
+            if unit["sessions"] < 1:
+                raise IntegrityError("a review block needs >=1 session")
+            continue
         floor = len(unit["concepts"]) + 1
         if unit["sessions"] < floor:
             raise IntegrityError(
@@ -895,11 +916,13 @@ def cmd_check(course: Path):
     if total > size - MIN_CONSOLIDATION:
         raise IntegrityError(
             f"units total {total} sessions of a {size}-session course; "
-            f"leave >={MIN_CONSOLIDATION} at the end to consolidate "
-            f"(max {size - MIN_CONSOLIDATION})")
+            f"leave >={MIN_CONSOLIDATION} free at the end for the terminal "
+            f"synthesis session (max {size - MIN_CONSOLIDATION})")
 
     # assets: a started unit must HAVE them; any that exist must be good
     for unit in units:
+        if unit.get("review"):
+            continue          # a review block owns no assets
         path = assets_path(course, unit["num"])
         if not path.exists():
             if unit["status"] != "untouched":
@@ -957,14 +980,24 @@ def dispatch(course: Path):
     here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
     if here is None:
         out["type"], out["cap"], out["terminal"] = "consolidation", QUEUE_CAP, True
-        out["why"] = "every unit is taught; these sessions are for mixing"
+        out["why"] = "every unit is taught; synthesis and transfer, not recall"
+        return out
+    if here.get("review"):
+        out["type"], out["cap"] = "review", QUEUE_CAP
+        out["why"] = "mixed review block — no new material"
+        nxt = next((u for u in units if u.get("num") is not None
+                    and u["start"] > here["end"]
+                    and u["status"] == "untouched"), None)
+        if nxt and not assets_path(course, nxt["num"]).exists():
+            out["author"] = assets_path(course, nxt["num"]).name
         return out
 
     out["unit"] = here
     if not assets_path(course, here["num"]).exists():
         out["author"] = assets_path(course, here["num"]).name
     elif idx == here["end"]:
-        nxt = next((u for u in units if u["num"] > here["num"]), None)
+        nxt = next((u for u in units if u.get("num") is not None
+                    and u["num"] > here["num"]), None)
         if nxt and not assets_path(course, nxt["num"]).exists():
             out["author"] = assets_path(course, nxt["num"]).name
     if idx == here["end"]:
@@ -998,7 +1031,9 @@ def cmd_report(course: Path):
         f"due today: {len(due)} ({', '.join(due) or '-'})",
         f"stuck (needs your call): {len(stuck)} ({', '.join(stuck) or '-'})",
         f"repair-pending: {meta['repair-pending']}",
-        "units: " + ", ".join(f"{u['num']}:{u['status']}" for u in units),
+        "units: " + ", ".join(
+            f"{'review' if u.get('review') else u['num']}:{u['status']}"
+            for u in units),
     ]
     return "\n".join(lines)
 
@@ -1118,6 +1153,47 @@ def course_label(course: Path) -> str:
     return Path(course).resolve().name.replace("-", " ").replace("_", " ")
 
 
+# The pilot's worst failure: two stateless tutors, same state, same
+# policy, converged on the SAME quiz questions two sessions running.
+# The fix is state the next tutor sees, not a stronger exhortation:
+# every question asked lands in the log's '## asked' section, and begin
+# replays the recent ones. All matching is case-insensitive — tutors do
+# not capitalize consistently.
+ASKED_HEAD_RE = re.compile(r"^##+\s*asked\s*$", re.M | re.I)
+BANK_ID_RE = re.compile(r"^\S+\.(?:q|apply|int|ex)\d*$", re.I)
+
+
+def _asked_items(text: str):
+    m = ASKED_HEAD_RE.search(text)
+    if not m:
+        return []
+    rest = text[m.end():]
+    nxt = re.search(r"^##+\s", rest, re.M)
+    scope = rest[:nxt.start()] if nxt else rest
+    return [ln.strip()[2:].strip() for ln in scope.splitlines()
+            if ln.strip().startswith("- ") and ln.strip()[2:].strip()]
+
+
+def _asked_history(course: Path):
+    """(recent, bank): what the last ASKED_RECENCY sessions asked, and
+    every asset-bank item id ever used. Bank items are single-use for the
+    whole course; free-text case signatures age out of the recent list."""
+    logs = sorted((Path(course) / "log").glob("*.md"), reverse=True)
+    recent, bank, seen, seen_bank = [], [], set(), set()
+    for i, path in enumerate(logs):
+        m = re.match(r"\d{4}-\d\d-\d\d-(.+)\.md$", path.name)
+        tok = m.group(1) if m else path.stem
+        for item in _asked_items(_read(path)):
+            head = item.split()[0]
+            if BANK_ID_RE.match(head) and head.casefold() not in seen_bank:
+                seen_bank.add(head.casefold())
+                bank.append(head)
+            if i < ASKED_RECENCY and item.casefold() not in seen:
+                seen.add(item.casefold())
+                recent.append((tok, item))
+    return recent, sorted(bank, key=str.casefold)
+
+
 def _last_log(course: Path):
     """(path, token, date, open_question) for the newest session log."""
     logs = sorted((Path(course) / "log").glob("*.md"))
@@ -1199,6 +1275,14 @@ def cmd_begin(course: Path):
                      + (f" ({gap})" if gap else ""))
         if question:
             lines.append(f"open question: {question}")
+    asked, bank = _asked_history(course)
+    if asked:
+        lines.append("asked recently (do not reuse — a new case means a "
+                     "new decision and inference chain, not new names):")
+        lines += [f"  [{tok}] {item}" for tok, item in asked]
+    if bank:
+        lines.append("bank items used (single-use, never repeat): "
+                     + ", ".join(bank))
     if state == "reset" and abandoned_age is not None:
         hrs = int(abandoned_age.total_seconds() // 3600)
         lines.append(
@@ -1247,7 +1331,7 @@ def cmd_close(course: Path, logfile: Path):
     write_plan_header(course, updates)
 
     here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
-    if here and advanced:
+    if here and advanced and here.get("num") is not None:
         write_unit_status(course, here["num"],
                           "taught" if idx >= here["end"] else "in-progress")
 

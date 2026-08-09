@@ -109,3 +109,15 @@ with it.
 also the tutor and therefore chose when to stop: real sessions have no
 ending. Generalised: **simulation cannot test the transitions the
 simulator controls.**
+
+**The pilot's final session** found the subtler cousin of the round-3
+class: two consecutive review sessions asked the learner the *same three
+questions*, near-verbatim, and the learner noticed before the system
+did. Not forgetting — convergence: two stateless tutors given the same
+state and the same policy produce the same output, and the standing
+instruction to "vary the wording" made it worse, because paraphrase
+feels novel to the generator and identical to the recipient.
+Generalised: **you cannot exhort a stateless agent into novelty — you
+have to change the state it sees.** Hence the asked ledger: every
+question a session poses lands in its log, `begin` replays the recent
+ones, and asset-bank items burn on first use.

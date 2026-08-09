@@ -115,10 +115,19 @@ Then work, in order:
    - **frame every unit as a question**, never a topic
 6. **Do the arithmetic, or the course won't fit.** Each unit needs
    `len(concepts) + 1` sessions — one per concept at one new concept per
-   session, plus the teach-back. The units must total **at least two
-   sessions short of the course size**, leaving room to consolidate at
-   the end. `check` enforces both; if it doesn't fit, cut concepts, not
-   sessions.
+   session, plus the teach-back — and **no more**: a unit padded past its
+   material forces the extra sessions to manufacture recall, which is
+   how a course ends up re-asking its own questions. Then distribute the
+   review, don't stack it at the end:
+   - after every 2–3 units, insert a `## Review: <title>` block
+     (`sessions: N`, no concepts, no assets) — mixed retrieval reaching
+     back across *all* prior units, run per SKILL.md's `review` type
+   - leave **at least one session** at the very end unclaimed: the
+     terminal synthesis (artifact-centered), not a second recall block —
+     two adjacent review sessions over the same material are not spaced,
+     they are the same session twice
+   `check` enforces the floor and the fit; if it doesn't fit, cut
+   concepts, not sessions.
 7. **Author assets for units 1–2** per `templates/assets-unit.md`.
    Give every keystone at least one `misconceptions:` entry in the map —
    a keystone with none has nothing for its rubric to warn against.

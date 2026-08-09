@@ -40,6 +40,11 @@ untaught here: switching-costs, data-network-effects
 quiz these (3): inference-cost, gross-margin, scale-economies
 last session: 13 on 2026-05-04 (2 days ago)
 open question: why is the cheapest chip in the rack the one nobody can buy?
+asked recently (do not reuse — a new case means a new decision and
+inference chain, not new names):
+  [13] gross-margin.q2
+  [12] neocloud claims rising margin while rental prices fall
+bank items used (single-use, never repeat): gross-margin.q2, ...
 ```
 
 If it errors, **stop and send the user nothing** — a broken course is an
@@ -83,9 +88,16 @@ That is what lets a future run reconstruct a lesson whose log was never
 written (see `scheduling.md`). Keep them plain — no ids, no tokens.
 
 **Then the retrieval block.** Quiz exactly the concepts `begin` listed,
-cold, from the stored items. Vary the wording and the case each time:
-grade against the stored *answer*, not the stored *question*. Asking the
-identical item five times teaches the item, not the idea.
+cold. `begin` told you what is already spent: a stored bank item is used
+ONCE in the whole course, and after that every probe of the concept is a
+case you build fresh. Fresh is structural — a different decision,
+different evidence, a different inference chain — not the same case
+wearing new names and numbers; a paraphrase is the same question, and it
+tests whether they remember your wording, not whether the idea
+transfers. Grade against the stored *answer*, not the stored *question*,
+and record every question you pose under `## asked` in the log — that
+ledger is the only reason the next session (which remembers nothing)
+won't repeat you.
 
 > After **every** item, in the same turn: the right answer, and if they
 > missed, name the misconception they hit **in plain words**. Never say
@@ -117,9 +129,17 @@ Never show or recite the rubric; give the verdict as a sentence about
 what they actually said. Offer voice notes or bullets — typing an essay
 on a phone is why people skip this.
 
-**consolidation** — the last sessions of the course. No new material:
-mixed retrieval and application across everything, weakest first (that is
-what `begin` has queued). This is where retention is actually won.
+**review** — a mixed-review block between units. No new material and no
+bank items: integrated cases you build fresh, spanning every unit taught
+so far — the further back a concept reaches, the more the review is
+worth. Close by seeding the door into the next unit.
+
+**consolidation** — the final sessions of the course. Synthesis, not a
+recall block: integrated cases that force them to decide *which* concepts
+apply, weakest first (that is what `begin` has queued), and the artifact
+if the course has one. By now every bank item is long spent — if you
+cannot build a case structurally unlike the ledger, skip the concept
+rather than paraphrase it.
 
 **repair** — one concept, one session, on a fractional token so the
 counter doesn't move. Re-teach from its worked example, then one
@@ -161,9 +181,10 @@ doubt, close early.
    thing they got today, and the open question as a teaser. This is the
    last *teaching* message, and its prefix closes the bookend.
    Everything below this is silent.
-2. Write `log/<today>-<token>.md` — see `templates/log.md`. At most 15
-   lines, with one `- grade:` line per concept you have evidence for,
-   under `## grades`.
+2. Write `log/<today>-<token>.md` — see `templates/log.md`. Keep it
+   short: one `- grade:` line per concept you have evidence for under
+   `## grades`, and one line per question you posed under `## asked`
+   (bank id, or a one-line case signature).
 3. ```
    S close log/<file>
    ```
@@ -184,6 +205,9 @@ and the five writable results are in `templates/log.md`.
 - Teach a second new concept because the conversation is going well.
   That is exactly when the one-concept rule earns its keep: extra
   concepts taught today are concepts that never get spaced.
+- Re-ask anything `begin` listed under asked, however reworded. The
+  learner will notice before you do, and what they learn is that the
+  quizzes are theater.
 - Wait for permission to close. See §4 — it never comes.
 - Keep going when they've stopped replying *before* you closed. If they
   decline or go quiet mid-session, delete `.session-inprogress`, write

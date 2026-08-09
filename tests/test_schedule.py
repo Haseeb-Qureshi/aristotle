@@ -882,11 +882,11 @@ class TestCheck(CourseCase):
         with self.assertRaisesRegex(S.IntegrityError, "needs >=3"):
             S.cmd_check(self.dir)
 
-    def test_course_without_room_to_consolidate_is_loud(self):
+    def test_course_without_room_for_synthesis_is_loud(self):
         p = self.dir / "plan.md"
         p.write_text(PLAN_MD.replace("next-session: 2/10",
-                                     "next-session: 2/7"), encoding="utf-8")
-        with self.assertRaisesRegex(S.IntegrityError, "consolidate"):
+                                     "next-session: 2/6"), encoding="utf-8")
+        with self.assertRaisesRegex(S.IntegrityError, "synthesis"):
             S.cmd_check(self.dir)
 
     def test_bad_plan_header_values_are_loud(self):
@@ -1290,6 +1290,131 @@ class TestCLI(CourseCase):
         r = self.cli("report")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("due today", r.stdout)
+
+
+# ========================================================== asked ledger
+
+class TestAskedLedger(CourseCase):
+    """The pilot's worst failure: two stateless tutors, same state, same
+    policy — same questions. The fix is state the next tutor SEES, not a
+    stronger exhortation: every question asked lands in the log, and
+    `begin` replays the recent ones."""
+
+    def asked_log(self, name, session, *items):
+        lines = "\n".join(f"- {i}" for i in items)
+        return self.write_log(name, (
+            f"session: {session}\n\n## taught\nx\n\n## grades\n"
+            f"- grade: alpha | result: pass | note: ok\n\n"
+            f"## asked\n{lines}\n\n## open question\nnext hook\n"))
+
+    def test_begin_surfaces_recently_asked_items(self):
+        self.asked_log("2026-07-18-2.md", "2", "alpha.q1",
+                       "the sticker-vs-blended case")
+        self.asked_log("2026-07-19-3.md", "3", "beta.q1")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("asked recently", out)
+        self.assertIn("[2] the sticker-vs-blended case", out)
+        self.assertIn("[3] beta.q1", out)
+
+    def test_recency_window_is_three_logs_but_bank_use_is_forever(self):
+        """A bank item burned five sessions ago must STAY burned — the
+        repetition the pilot hit was invisible precisely because nothing
+        outlived the previous session."""
+        self.asked_log("2026-07-15-2.md", "2", "alpha.q1",
+                       "an old free-text case")
+        self.asked_log("2026-07-16-3.md", "3", "beta.q1")
+        self.asked_log("2026-07-17-4.md", "4", "alpha.q2")
+        self.asked_log("2026-07-18-5.md", "5", "delta.q1")
+        out = S.cmd_begin(self.dir)
+        self.assertNotIn("an old free-text case", out)   # aged out
+        self.assertIn("bank items used", out)
+        self.assertIn("alpha.q1", out)                    # burned forever
+
+    def test_asked_matching_is_case_insensitive(self):
+        """Tutors capitalize inconsistently ('AI Econ' vs 'AI economics');
+        a ledger that treats Alpha.Q1 and alpha.q1 as different items
+        silently un-burns them."""
+        self.write_log("2026-07-18-2.md", (
+            "session: 2\n\n## taught\nx\n\n## grades\n\n"
+            "## Asked\n- Alpha.Q1\n"))
+        self.asked_log("2026-07-19-3.md", "3", "alpha.q1")
+        out = S.cmd_begin(self.dir)
+        self.assertEqual(out.lower().count("alpha.q1"), 2)  # 1 recent + 1 bank
+        self.assertIn("bank items used", out)
+
+    def test_begin_is_quiet_without_asked_history(self):
+        self.write_log("2026-07-18-2.md",
+                       log_text("2", ("alpha", "pass", "x"), extra="hook"))
+        out = S.cmd_begin(self.dir)
+        self.assertNotIn("asked recently", out)
+        self.assertNotIn("bank items used", out)
+
+
+# ========================================================= review blocks
+
+REVIEW_PLAN_MD = """\
+course-status: active
+next-session: 4/10
+cadence: 3
+sessions-done: 3
+last-attended: 2026-07-20
+re-entry-pending: no
+
+## Unit 1: Why does alpha matter?
+sessions: 3
+concepts: [alpha, beta]
+keystones: [alpha]
+artifact-milestone: none
+status: taught
+
+## Review: mixed review over unit 1
+sessions: 1
+
+## Unit 2: What is gamma for?
+sessions: 3
+concepts: [gamma, delta]
+keystones: [gamma]
+artifact-milestone: draft the thing
+status: untouched
+"""
+
+
+class TestReviewBlocks(CourseCase):
+    """Rolling review between units, replacing the pilot's back-to-back
+    terminal consolidation pair. A review block occupies sessions like a
+    unit but teaches nothing and owns no assets."""
+
+    def setUp(self):
+        super().setUp()
+        (self.dir / "plan.md").write_text(REVIEW_PLAN_MD, encoding="utf-8")
+
+    def test_review_block_dispatches_as_mixed_review(self):
+        S.cmd_check(self.dir)                     # no assets, no floor demand
+        d = S.dispatch(self.dir)
+        self.assertEqual(d["type"], "review")
+        self.assertEqual(d["cap"], S.QUEUE_CAP)
+        self.assertFalse(d["terminal"])
+
+    def test_review_block_is_an_authoring_slot_for_the_next_unit(self):
+        self.assertEqual(S.dispatch(self.dir)["author"], "unit-02.md")
+        self.add_u2_assets()
+        self.assertIsNone(S.dispatch(self.dir)["author"])
+
+    def test_review_never_masks_the_next_units_prereqs(self):
+        """repair-pending triggers on the NEXT unit's prereqs; an
+        untouched-looking review block must not swallow that lookup."""
+        self.assertEqual(S._next_unit_prereq_ids(self.dir),
+                         {"alpha", "beta"})
+
+    def test_closing_a_review_session_moves_only_the_counter(self):
+        S.cmd_begin(self.dir)
+        p = self.write_log("2026-07-21-4.md",
+                           log_text("4", ("alpha", "pass", "clean")))
+        S.cmd_close(self.dir, p)
+        header, units = S.parse_plan(self.dir)
+        self.assertEqual(header["next-session"], "5/10")
+        self.assertEqual([u["status"] for u in units if u.get("num")],
+                         ["taught", "untouched"])
 
 
 if __name__ == "__main__":

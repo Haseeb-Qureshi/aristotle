@@ -83,9 +83,13 @@ discard. **Sessions are bookended for exactly this** (`SKILL.md` §2):
 every session opens `Session N —` and its goodnight opens `Next time:`.
 So the search is deterministic, not a guess about topic words:
 
-1. Search history for the last `Session N —`. If no `Next time:`
-   follows it, that session was abandoned, and the messages between the
-   marker and the end of the thread are what was actually covered.
+1. Search history for the last `Session N —`, **case-insensitively** —
+   tutors do not capitalize a course label consistently ("AI economics"
+   one session, "AI Economics" the next), and a case-sensitive search
+   silently misses the very session it exists to find. If no
+   `Next time:` follows the marker, that session was abandoned, and the
+   messages between the marker and the end of the thread are what was
+   actually covered.
 2. If a real lesson happened, write `log/<date>-<token>.md` from what was
    actually taught and how the learner answered.
 3. **Grade `taught` only — never `pass`, `fail`, or `rubric-*`.** You
@@ -95,6 +99,15 @@ So the search is deterministic, not a guess about topic words:
 
 Then continue to `recover` as normal. If no lesson is found, do nothing
 — `recover` cleans up safely.
+
+**Chat history is short-lived.** Assistants compact or truncate long
+conversations, and a compacted transcript is *gone* — in the pilot,
+five of six sessions' raw messages had been destroyed within two weeks.
+Reconciliation therefore only works for the *most recent* session, in
+the window before the next compaction; it is a next-day safety net, not
+an archive. Anything the course needs durably — grades, open questions,
+the asked ledger — must be in the course directory, never left to the
+conversation.
 
 The deeper fix belongs in the session, not the nudge: `SKILL.md` §4 puts
 the close trigger in the tutor's hands precisely so this stays rare.
