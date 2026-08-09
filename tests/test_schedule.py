@@ -1289,8 +1289,13 @@ class TestRecover(CourseCase):
 class TestCLI(CourseCase):
 
     def test_check_prints_ok(self):
+        """Contract: exit 0 and 'ok' on line one. Design warnings may
+        follow — they are advice, never a failure."""
         r = self.cli("check")
-        self.assertEqual((r.returncode, r.stdout.strip()), (0, "ok"))
+        lines = r.stdout.strip().splitlines()
+        self.assertEqual((r.returncode, lines[0]), (0, "ok"))
+        self.assertTrue(all(l.startswith("warn: ") for l in lines[1:]),
+                        r.stdout)
 
     def test_integrity_error_is_exit_2_with_no_traceback(self):
         self.set_record("alpha", verify="use")
@@ -1458,6 +1463,54 @@ class TestReviewBlocks(CourseCase):
         self.assertEqual(header["next-session"], "5/10")
         self.assertEqual([u["status"] for u in units if u.get("num")],
                          ["taught", "untouched"])
+
+
+class TestCourseWarnings(CourseCase):
+    """Design rules that `check` advises on but must never fail for —
+    every one of these was found broken in a real course before it was
+    written down as code."""
+
+    def warns(self):
+        return " | ".join(S.course_warnings(self.dir))
+
+    def test_padding_and_missing_scaffolding_are_flagged(self):
+        (self.dir / "plan.md").write_text(
+            PLAN_MD.replace("sessions: 3\nconcepts: [alpha, beta]",
+                            "sessions: 5\nconcepts: [alpha, beta]"),
+            encoding="utf-8")
+        w = self.warns()
+        self.assertIn("padded", w)          # 2 concepts in 5 sessions
+        self.assertIn("no README.md", w)
+        self.assertIn("history.md", w)
+
+    def test_warnings_never_fail_the_check(self):
+        self.assertEqual(S.cmd_check(self.dir), "ok")
+        self.assertTrue(S.course_warnings(self.dir))
+
+    def test_a_well_shaped_course_is_quiet(self):
+        p = self.dir / "plan.md"
+        p.write_text(PLAN_MD
+                     .replace("sessions: 3\nconcepts: [alpha, beta]",
+                              "sessions: 3\nconcepts: [alpha, beta, delta]")
+                     .replace("sessions: 3\nconcepts: [gamma, delta]",
+                              "sessions: 2\nconcepts: [gamma]")
+                     .replace("## Unit 2: What is gamma for?",
+                              "## Review: unit 1 mixed\nsessions: 1\n\n"
+                              "## Unit 2: What is gamma for?")
+                     .replace("next-session: 2/10", "next-session: 2/7"),
+                     encoding="utf-8")
+        self.add_u2_assets()
+        (self.dir / "README.md").write_text("x", encoding="utf-8")
+        (self.dir / "history.md").write_text("x", encoding="utf-8")
+        self.assertEqual(S.course_warnings(self.dir), [])
+
+    def test_keystone_without_misconceptions_is_flagged(self):
+        import re as _re
+        stripped = _re.sub(r"misconceptions:\n(?:  M\d+: .*\n)+", "",
+                           MAP_MD, count=1)
+        self.assertNotIn("the common wrong model", stripped)   # fixture sanity
+        (self.dir / "domain-map.md").write_text(stripped, encoding="utf-8")
+        self.assertIn("nothing to warn against", self.warns())
 
 
 if __name__ == "__main__":

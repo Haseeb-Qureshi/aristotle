@@ -944,6 +944,62 @@ def cmd_check(course: Path):
     return "ok"
 
 
+def course_warnings(course: Path):
+    """Design rules bootstrap.md states but `check` cannot fail on.
+
+    These are advisory because a violation is bad design, not corrupt
+    state — an existing course must never stop running because its
+    shape is dated. But unenforced prose gets violated: every rule here
+    was found broken in a real course (including this project's own
+    example course) before it was written down as code."""
+    course = Path(course)
+    out = []
+    header, units = parse_plan(course)
+    concepts = parse_map(course)
+    real = [u for u in units if not u.get("review")]
+
+    for u in real:
+        floor = len(u["concepts"]) + 1
+        if u["sessions"] > floor:
+            out.append(
+                f"unit {u['num']} is padded: {len(u['concepts'])} concepts in "
+                f"{u['sessions']} sessions. Sessions past concepts+1 have no "
+                "new material and end up manufacturing recall.")
+        if "?" not in u["title"]:
+            out.append(f"unit {u['num']} is not question-framed: "
+                       f"{u['title']!r}")
+
+    tail = course_size(header) - sum(u["sessions"] for u in units)
+    if tail > 2:
+        out.append(
+            f"{tail} sessions left unclaimed at the end — that is a stack of "
+            "terminal recall blocks, not a synthesis. Distribute them as "
+            "'## Review:' blocks between units.")
+    if len(real) >= 3 and not any(u.get("review") for u in units):
+        out.append(
+            "no '## Review:' blocks — reviews stacked at the end are the "
+            "same session twice; distribute after every 2-3 units.")
+
+    for u in real:
+        if not assets_path(course, u["num"]).exists():
+            out.append(
+                f"unit {u['num']} has no assets yet — author-at-bootstrap is "
+                "the default; whatever model is running that day writes them "
+                "otherwise.")
+        for k in u["keystones"]:
+            if not concepts.get(k, {}).get("misconceptions"):
+                out.append(
+                    f"keystone {k!r} declares no misconceptions — its rubric "
+                    "has nothing to warn against.")
+
+    for f in ("README.md", "history.md"):
+        if not (course / f).exists():
+            why = ("a stranger agent has no entry point" if f == "README.md"
+                   else "graduation has no baseline delta to show")
+            out.append(f"no {f} — {why}.")
+    return out
+
+
 # --------------------------------------------------------------- dispatch
 
 def dispatch(course: Path):
@@ -1386,6 +1442,8 @@ def main(argv=None):
             print(cmd_close(course, a.logfile))
         elif a.cmd == "check":
             print(cmd_check(course))
+            for w in course_warnings(course):
+                print(f"warn: {w}")
         elif a.cmd == "queue":
             print("\n".join(cmd_queue(course)))
         elif a.cmd == "report":
