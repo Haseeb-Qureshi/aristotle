@@ -4,6 +4,17 @@ How to put a course on a recurring trigger so it runs itself. Read this
 once, at the end of bootstrap. Everything here is platform-agnostic; the
 worked example at the bottom is one concrete wiring.
 
+**"Scheduling" here means a recurring trigger that wakes *you*, the
+agent — a cron entry, a scheduled job, a task runner.** It does not mean
+putting an appointment in the user's calendar. A calendar event reminds
+a human to do something; what this course needs is a job that fires,
+heals the course state, and sends a message even when nobody is
+thinking about sourdough. (A clean-room agent reached for a calendar
+tool here and created nothing that would ever run.) If your platform
+has no scheduler, say so plainly and hand the user the one command that
+starts a session, rather than inventing a reminder that cannot heal
+state.
+
 A scheduled Aristotle deployment has exactly **two moving parts**:
 
 | | Runs | Job |
