@@ -17,6 +17,21 @@ event in a chat, so a tutor that waits for one waits forever. Fixed in
 `SKILL.md` §4 (the tutor owns the close trigger) and `scheduling.md`
 (the nudge job reconciles a missed close from history).
 
+## Install
+
+```
+./install.sh            # sync the skill everywhere an agent might load it
+./install.sh --check    # report drift, change nothing
+```
+
+Agents load skills from several roots (`~/.agents/skills`,
+`~/.hermes/skills`, `~/.claude/skills`), and whichever the loader finds
+first is the one that runs. Hand-copying drifted them apart until a
+runtime loaded a six-day-old procedure while three current copies sat
+beside it — so syncing is a script, and `--check` belongs in any
+pre-flight. Course directories are not installs: they receive these
+files at bootstrap and own them afterwards.
+
 ## How it works
 
 - **Map, plan, session.** A one-time bootstrap interviews you (~5 taps),
@@ -64,15 +79,17 @@ event in a chat, so a tutor that waits for one waits forever. Fixed in
 | [`SPEC.md`](SPEC.md) | **Superseded** — the v2.1 design spec, kept for history |
 
 ```
-python3 -m unittest discover -s tests          # 140 tests
+python3 -m unittest discover -s tests          # 161 tests
 python3 scripts/schedule.py --course example-course check
 ```
 
 ## Using it
 
-**As a skill.** Install the four procedure files plus `scripts/` and
-`templates/` wherever your agent loads skills. Ask it to create a course;
-it reads `bootstrap.md`. A session trigger fires; it reads `SKILL.md`.
+**As a skill.** Run `./install.sh` (above), then ask your agent to
+create a course — it reads `bootstrap.md`. When a session trigger
+fires, it reads `SKILL.md`. Skill discovery is by description: a plain
+"set me up a course on X" is enough for an agent that has never been
+told this repo exists.
 
 **By hand.** Copy `example-course/` as a starting shape, or run
 bootstrap against any topic. Every course directory is self-sufficient:
