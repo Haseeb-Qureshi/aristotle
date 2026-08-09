@@ -148,6 +148,13 @@ Then work, in order:
 
 ## Step 6 — Write the course directory
 
+**Where it goes.** If the user named a location, use exactly that one.
+Otherwise put it beside their other projects — `~/projects/<slug>/`,
+slug from the topic — and **say the absolute path in your reply**. The
+path is not an implementation detail: the scheduler, the nudge job, and
+every future session have to find this directory, and a course written
+somewhere nobody records is a course that runs once.
+
 A course directory must be self-sufficient — that is the resurrection
 test. Copy in `scripts/schedule.py`, **`SKILL.md`, `checkpoint.md`,
 `templates/`, and `references/`** (SKILL.md points into `references/`;
