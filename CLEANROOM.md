@@ -13,7 +13,7 @@ user would type — *"set me up a proper course on sourdough"* — with no
 mention of Aristotle, this repo, or any file.
 
 The test was meant to evaluate teaching. It never got there before
-finding six defects, three of them live in production. That is the
+finding nine defects, three of them live in production. That is the
 result worth recording: **the portability failures were not in the
 pedagogy, they were in everything around it.**
 
@@ -28,7 +28,7 @@ host personality file insisted it was a single-purpose bot that should
 refuse anything outside Portuguese and fintech lessons. The procedure
 files out-argued the system prompt.
 
-## The six defects
+## The nine defects
 
 **1. Skill roots drift, and the stale copy can win.**
 The runtime loaded `~/.agents/skills/aristotle` — a six-day-old copy
@@ -78,7 +78,36 @@ instruction pointing at a file it did not contain.
 *Fix:* Step 6 copies `references/`, and now says explicitly not to seed
 a course from `example-course/`'s state files.
 
-**6. "Isolated" profiles are not isolated.**
+**6. Bootstrap never said where a course lives.**
+Step 6 said "write the course directory" without saying *where*. The
+agent chose its own path and ignored the one it had been given. The
+path is load-bearing — the scheduler, the nudge job, and every future
+session must find it — so a course written somewhere nobody recorded is
+a course that runs once.
+*Fix:* Step 6 states the convention and requires reporting the absolute
+path back to the user.
+
+**7. "Schedule the course" was read as "make a calendar event".**
+Told to schedule, the agent reached for a Google Calendar skill. A
+calendar event reminds a human; what a course needs is a job that
+fires, heals state, and nudges whether or not anyone remembered.
+*Fix:* `scheduling.md` says so in its first paragraph, where the agent
+reads it.
+
+**8. The longest stretch of work had no durable anchor.**
+Partway through the design studio the agent lost the interview answers
+to context compaction — then guessed the topic back from directory
+mtimes and contradicted itself on the session count (20 sessions in one
+message, 30 in the next). Everything the user had said lived only in
+the conversation.
+*Fix:* Step 5 now writes `brief.md` — topic, terminal task, counts,
+cadence, path — *before* the studio begins. Anything a later you would
+have to re-ask the user for belongs on disk before the long work
+starts. (Notably, the recovery it improvised — reading the filesystem —
+is the resurrection property half-working. Give it something correct to
+read and it works fully.)
+
+**9. "Isolated" profiles are not isolated.**
 `hermes profile create --clone` copies `SOUL.md` and `memories/`, so
 the clean-room instance began the test believing it was the operator's
 personal bot and reporting the wrong course topic from a memory file.
