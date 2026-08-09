@@ -13,7 +13,7 @@ user would type — *"set me up a proper course on sourdough"* — with no
 mention of Aristotle, this repo, or any file.
 
 The test was meant to evaluate teaching. It never got there before
-finding nine defects, three of them live in production. That is the
+finding ten defects, three of them live in production. That is the
 result worth recording: **the portability failures were not in the
 pedagogy, they were in everything around it.**
 
@@ -28,7 +28,37 @@ host personality file insisted it was a single-purpose bot that should
 refuse anything outside Portuguese and fintech lessons. The procedure
 files out-argued the system prompt.
 
-## The nine defects
+## The bootstrap verdict
+
+Given one uninterrupted turn and a complete brief, GPT-5.6-Codex built
+a course that passes `check` clean and would be a genuinely good thing
+to study from:
+
+- three units, all question-framed, each sized exactly `concepts + 1`;
+- a `## Review:` block between units 2 and 3 and the final session left
+  for synthesis — the distributed shape the pilot argued for, produced
+  without being asked;
+- quiz items with answer keys and distractors mapped to real
+  misconception ids, worked examples with concrete numbers (*"Dough A
+  is 26 C, risen 50%, side bubbles… shape A; continue bulk on B"*),
+  apply prompts that demand judgment rather than recall;
+- rubrics whose claims are the actual load-bearing ideas;
+- all seven concepts left `untaught` — it did not seed from what the
+  learner claimed, which is the one instruction most tempting to
+  ignore;
+- a `history.md` that says, in as many words, *"No baseline answer has
+  been invented during bootstrap."*
+
+Two design flaws, both now guarded in `bootstrap.md`: it tagged all
+seven concepts `threshold: yes` and made every concept a keystone
+(tagging everything is tagging nothing), and it wrote a plan section
+the scheduler silently ignores (defect 10).
+
+The conclusion that matters for portability: **the procedure transferred
+to a different model family without adaptation.** What did not transfer
+was everything outside the procedure files.
+
+## The ten defects
 
 **1. Skill roots drift, and the stale copy can win.**
 The runtime loaded `~/.agents/skills/aristotle` — a six-day-old copy
@@ -107,7 +137,15 @@ starts. (Notably, the recovery it improvised — reading the filesystem —
 is the resurrection property half-working. Give it something correct to
 read and it works fully.)
 
-**9. "Isolated" profiles are not isolated.**
+**9. A plan section can claim sessions the scheduler ignores.**
+The bootstrap wrote `## Terminal synthesis (session 12)` with
+`sessions: 1`. Only `Unit N:` and `Review:` blocks consume sessions, so
+the line was dropped — harmless at that count, silently wrong at any
+other, and invisible either way.
+*Fix:* `course_warnings()` flags any non-unit section declaring
+`sessions:`.
+
+**10. "Isolated" profiles are not isolated.**
 `hermes profile create --clone` copies `SOUL.md` and `memories/`, so
 the clean-room instance began the test believing it was the operator's
 personal bot and reporting the wrong course topic from a memory file.
