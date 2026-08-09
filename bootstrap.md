@@ -93,6 +93,20 @@ longest silence in the whole product and they are holding a phone:
 
 Then work, in order:
 
+0. **Write the brief down before you build anything.** Create the
+   course directory and put `brief.md` in it first: topic, terminal
+   task, session count, cadence, research ruling, chosen path, and the
+   absolute course path. Six lines, thirty seconds.
+
+   This is the cheapest insurance in the whole procedure. The design
+   studio is the longest single stretch of work you will do, and if
+   your context is compacted or the run is interrupted partway, every
+   answer the user gave you is gone — a clean-room agent that lost it
+   mid-bootstrap had to guess the topic back from directory mtimes and
+   then contradicted itself on the session count. Anything a later you
+   would have to re-ask the user for belongs on disk before the long
+   work starts, not after it.
+
 1. **Research sweep** if ruled. Distill into `sources/`.
 2. **Over-generate** a candidate concept inventory — everything a course
    on this could contain.
