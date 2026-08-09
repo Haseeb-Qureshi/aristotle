@@ -1465,6 +1465,22 @@ class TestReviewBlocks(CourseCase):
                          ["taught", "untouched"])
 
 
+class TestAgentFacingErrors(CourseCase):
+
+    def test_wrong_directory_says_what_to_do(self):
+        """The clean-room agent hit a bare FileNotFoundError running from
+        the wrong cwd. An error an agent cannot act on is a dead end."""
+        empty = self.dir / "not-a-course"
+        empty.mkdir()
+        r = subprocess.run(
+            [sys.executable, str(SCRIPT), "--course", str(empty), "check"],
+            capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("not a course directory", r.stderr)
+        self.assertIn("--course", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+
 class TestCourseWarnings(CourseCase):
     """Design rules that `check` advises on but must never fail for —
     every one of these was found broken in a real course before it was

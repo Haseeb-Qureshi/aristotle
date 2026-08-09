@@ -67,8 +67,22 @@ class IntegrityError(Exception):
     """Cross-file state disagrees, or an operation would corrupt it."""
 
 
+STATE_FILES = {"domain-map.md", "plan.md", "knowledge-state.md"}
+
+
 def _read(path: Path) -> str:
-    return Path(path).read_text(encoding="utf-8")
+    path = Path(path)
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # an agent that lands here has usually run from the wrong cwd;
+        # a bare traceback tells it nothing it can act on
+        if path.name in STATE_FILES:
+            raise IntegrityError(
+                f"{path} not found — this is not a course directory. Run "
+                "from the course, or pass --course <dir>. (If the course "
+                "is new, bootstrap.md step 6 writes these three files.)")
+        raise IntegrityError(f"{path} not found")
 
 
 def _write(path: Path, text: str):
