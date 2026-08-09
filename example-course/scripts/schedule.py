@@ -487,7 +487,16 @@ def _apply_grade(rec, grade, meta, today: dt.date, next_unit_needs):
         if rec["status"] in ("untaught", "plateaued"):
             rec["status"] = "active"
         rec["fails"] = 0
-        rec["interval"] = ladder_up(rec["interval"])
+        # climb only if the elapsed gap DEMONSTRATED the current rung.
+        # An early probe (consolidation ignores due dates) is a
+        # near-guaranteed success and near-zero evidence of retention:
+        # it restarts the clock but keeps the rung. The pilot reached
+        # the 35-day rung on two probes 1 day apart before this guard.
+        # A fail has no such guard — failing early is WORSE news.
+        elapsed = rec["interval"] if rec["last"] in ("-", "") else \
+            (today - dt.date.fromisoformat(rec["last"])).days
+        rec["interval"] = max(rec["interval"],
+                              ladder_up(min(rec["interval"], elapsed)))
         rec["last"], rec["next"] = iso, \
             (today + dt.timedelta(rec["interval"])).isoformat()
 
@@ -1243,7 +1252,10 @@ def cmd_begin(course: Path):
     lines = [f"recover: {state}",
              f"course: {course_label(course)}",
              f"session: {token} of {d['size']}",
-             f"type: {d['type']}  ({d['why']})"]
+             f"type: {d['type']}  ({d['why']})",
+             # the exact filename, so the tutor never computes a date
+             # (a UTC-clocked tutor otherwise drifts off the course tz)
+             f"log file: log/{_today(course).isoformat()}-{token}.md"]
     if d.get("concept"):
         lines.append(f"concept: {d['concept']}")
     if d["unit"]:

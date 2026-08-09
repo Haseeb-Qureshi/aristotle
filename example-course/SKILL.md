@@ -34,6 +34,7 @@ recover: ok
 course: AI economics
 session: 14 of 30
 type: standard  (session 2 of unit 4)
+log file: log/2026-05-06-14.md
 unit: 4 — When is a moat not a moat?
 assets: assets/unit-04.md
 untaught here: switching-costs, data-network-effects
@@ -181,10 +182,12 @@ doubt, close early.
    thing they got today, and the open question as a teaser. This is the
    last *teaching* message, and its prefix closes the bookend.
    Everything below this is silent.
-2. Write `log/<today>-<token>.md` — see `templates/log.md`. Keep it
-   short: one `- grade:` line per concept you have evidence for under
-   `## grades`, and one line per question you posed under `## asked`
-   (bank id, or a one-line case signature).
+2. Write the file `begin` named on its `log file:` line — see
+   `templates/log.md`. (Use that exact name: your clock and the
+   course's timezone can disagree about the date.) Keep it short: one
+   `- grade:` line per concept you have evidence for under `## grades`,
+   and one line per question you posed under `## asked` (bank id, or a
+   one-line case signature).
 3. ```
    S close log/<file>
    ```

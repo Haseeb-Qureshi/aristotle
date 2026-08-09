@@ -121,3 +121,14 @@ Generalised: **you cannot exhort a stateless agent into novelty — you
 have to change the state it sees.** Hence the asked ledger: every
 question a session poses lands in its log, `begin` replays the recent
 ones, and asset-bank items burn on first use.
+
+**The learner** then caught what the engine's own review had not: those
+two adjacent sessions had also inflated the schedule. Consolidation
+ignores due dates by design, but the transition table climbed the
+ladder on *any* pass — so two probes one day apart promoted concepts to
+the 35-day rung on evidence that never exceeded a six-day gap.
+Generalised: **an interval is a claim about demonstrated retention, and
+a pass may only climb it by the gap it actually survived.** Early
+passes now keep the rung and restart the clock; early fails still step
+down, because failing one day after the last retrieval is worse news,
+not better.

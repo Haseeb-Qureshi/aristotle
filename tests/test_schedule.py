@@ -374,9 +374,52 @@ class TestTransitions(CourseCase):
         self.assertEqual((r["status"], r["interval"], r["next"]),
                          ("active", 1, "2026-07-22"))
 
+    def grade_on(self, cid, result, day, needs=frozenset()):
+        meta, recs = self.state()
+        S._apply_grade(recs[cid], {"id": cid, "result": result, "note": ""},
+                       meta, dt.date.fromisoformat(day), needs)
+        S.save_state(self.dir, meta, recs)
+
     def test_pass_climbs_the_ladder(self):
         self.grade("alpha", "pass")
         self.assertEqual(self.rec("alpha")["interval"], 3)
+
+    def test_an_early_pass_keeps_the_rung_and_restarts_the_clock(self):
+        """The pilot climbed 7->16->35 on probes 5 and 1 days apart. A
+        pass may climb only when the elapsed gap DEMONSTRATED the current
+        rung; early success is a clock restart, not evidence."""
+        self.set_record("alpha", interval=16, last="2026-07-20")
+        self.grade("alpha", "pass")               # 1 day after last
+        r = self.rec("alpha")
+        self.assertEqual(r["interval"], 16)       # rung kept, not 35
+        self.assertEqual(r["next"], "2026-08-06")  # clock restarted
+
+    def test_an_on_time_pass_still_climbs(self):
+        self.set_record("alpha", interval=16, last="2026-07-05")
+        self.grade("alpha", "pass")               # exactly 16 days later
+        self.assertEqual(self.rec("alpha")["interval"], 35)
+
+    def test_a_late_pass_climbs_one_rung_only(self):
+        self.set_record("alpha", interval=7, last="2026-06-01")
+        self.grade("alpha", "pass")               # 50 days: still one rung
+        self.assertEqual(self.rec("alpha")["interval"], 16)
+
+    def test_an_early_fail_still_steps_down(self):
+        """The asymmetry is deliberate: failing one day after the last
+        retrieval is WORSE news than failing on schedule."""
+        self.set_record("alpha", interval=16, last="2026-07-20")
+        self.grade("alpha", "fail")
+        self.assertEqual(self.rec("alpha")["interval"], 7)
+
+    def test_back_to_back_reviews_cannot_inflate_the_ladder(self):
+        """Replay of the pilot's terminal pair: two passes on consecutive
+        days must leave the rung where the last EARNED climb put it."""
+        self.set_record("alpha", interval=7, last="2026-07-14")
+        self.grade_on("alpha", "pass", "2026-07-19")   # 5 of 7 days: early
+        self.grade_on("alpha", "pass", "2026-07-20")   # next day: early
+        r = self.rec("alpha")
+        self.assertEqual(r["interval"], 7)
+        self.assertEqual(r["next"], "2026-07-27")
 
     def test_fail_steps_back_one_not_to_zero(self):
         self.set_record("alpha", interval=16)
