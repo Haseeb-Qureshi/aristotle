@@ -117,6 +117,13 @@ real evidence.
 to the close even if the middle is unfinished — the open question carries
 the rest. An empty queue is a normal state, not a problem; skip the block.
 
+**Write for a phone.** Normal prose paragraphs; let the client wrap them.
+Never hard-wrap teaching text at ~80 columns — source-style line breaks
+render as jagged, broken-looking messages on a narrow screen. Break lines
+only where a paragraph, list, quote, or code block genuinely begins.
+Commands and code stay independently legible, but their formatting rules
+never leak into prose.
+
 ## 3. Middles, by the type `begin` printed
 
 **standard** — teach the unit's next untaught concept, worked example
