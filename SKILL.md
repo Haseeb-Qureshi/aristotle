@@ -50,7 +50,11 @@ bank items used (single-use, never repeat): gross-margin.q2, ...
 
 If it errors, **stop and send the user nothing** — a broken course is an
 operator problem, not a lesson. Fix it if it's an asset file you wrote;
-otherwise leave the course alone and stay quiet.
+otherwise leave the course alone and stay quiet. **One exception:** if
+the error says a session is already live and that lock is *yours* — you
+already ran `begin` in this conversation and were interrupted — nothing
+is broken. Say nothing about it, keep teaching from where you were, and
+close as normal. Never run `begin` twice in one session.
 
 **Pick up where they left off.** `last session` and `open question` are
 your continuity — that question was written at the last close *to be*

@@ -1305,6 +1305,26 @@ def _last_log(course: Path):
     return path, token, date, q
 
 
+def _already_live(course: Path) -> str:
+    """The two audiences of this error need opposite advice. A tutor whose
+    own turn was interrupted mid-lesson re-runs begin, hits the fresh lock
+    it itself wrote, and — told to 'send nothing' — goes mute at the user
+    (observed 2026-08-17). The lock holder is named so it can tell."""
+    tok = "?"
+    try:
+        for line in _read(Path(course) / SENTINEL).splitlines():
+            if line.startswith("session:"):
+                tok = line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return (f"a session is already live (.session-inprogress holds "
+            f"session {tok}). If that lock is YOURS — you are mid-lesson in "
+            "this conversation and already ran begin — do NOT run begin "
+            "again: keep teaching, and close as normal. If you are an "
+            "unattended job or a different conversation, send the user "
+            "nothing and stop.")
+
+
 def cmd_begin(course: Path):
     """Everything before the first word to the user, in one call."""
     course = Path(course)
@@ -1316,9 +1336,7 @@ def cmd_begin(course: Path):
             sentinel.stat().st_mtime)
     state = cmd_recover(course)
     if state == "locked":
-        raise IntegrityError(
-            "a session is already live (.session-inprogress is fresh) — "
-            "send nothing and stop")
+        raise IntegrityError(_already_live(course))
     cmd_check(course)
     d = dispatch(course)
     meta, _ = load_state(course)
@@ -1328,7 +1346,7 @@ def cmd_begin(course: Path):
     try:
         fd = os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        raise IntegrityError("a session is already live — send nothing")
+        raise IntegrityError(_already_live(course))
     with os.fdopen(fd, "w") as fh:
         fh.write(f"session: {token}\n")
 

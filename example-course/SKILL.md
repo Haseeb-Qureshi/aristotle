@@ -50,7 +50,11 @@ bank items used (single-use, never repeat): gross-margin.q2, ...
 
 If it errors, **stop and send the user nothing** — a broken course is an
 operator problem, not a lesson. Fix it if it's an asset file you wrote;
-otherwise leave the course alone and stay quiet.
+otherwise leave the course alone and stay quiet. **One exception:** if
+the error says a session is already live and that lock is *yours* — you
+already ran `begin` in this conversation and were interrupted — nothing
+is broken. Say nothing about it, keep teaching from where you were, and
+close as normal. Never run `begin` twice in one session.
 
 **Pick up where they left off.** `last session` and `open question` are
 your continuity — that question was written at the last close *to be*
@@ -116,6 +120,13 @@ real evidence.
 **Budget: about 12 minutes, about 10 of your turns.** When you hit it, go
 to the close even if the middle is unfinished — the open question carries
 the rest. An empty queue is a normal state, not a problem; skip the block.
+
+**Write for a phone.** Normal prose paragraphs; let the client wrap them.
+Never hard-wrap teaching text at ~80 columns — source-style line breaks
+render as jagged, broken-looking messages on a narrow screen. Break lines
+only where a paragraph, list, quote, or code block genuinely begins.
+Commands and code stay independently legible, but their formatting rules
+never leak into prose.
 
 ## 3. Middles, by the type `begin` printed
 
