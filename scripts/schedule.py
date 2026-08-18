@@ -563,6 +563,20 @@ def cmd_commit_grades(course: Path, logfile: Path):
         raise IntegrityError(
             f"grade for unknown concept id(s) {unknown} — refusing to "
             "apply ANY grade from this log (all-or-nothing)")
+    # a concept cannot fail before it was taught. A pre-instruction miss
+    # (a guess-first opener that went wrong) is material, not evidence —
+    # grade it 'taught' with the miss in the note instead. Observed
+    # 2026-08-18: a bank quiz item used as the door into an untaught
+    # concept nearly produced exactly this unjust fail.
+    unjust = [g["id"] for g in grades
+              if g["result"] in ("fail", "rubric-fail")
+              and records[g["id"]]["status"] == "untaught"]
+    if unjust:
+        raise IntegrityError(
+            f"cannot grade {unjust} as fail: still untaught — a concept "
+            "cannot fail before it was taught. If they missed a "
+            "pre-instruction guess, teach it and grade 'taught' with the "
+            "miss in the note.")
     needs = _next_unit_prereq_ids(course)
     today = _today(course)
     for g in grades:

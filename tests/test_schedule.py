@@ -1465,6 +1465,35 @@ class TestReviewBlocks(CourseCase):
                          ["taught", "untouched"])
 
 
+class TestUnjustFail(CourseCase):
+    """A concept cannot fail before it was taught. The pilot's tutor used
+    a bank quiz item as the door into an untaught concept; had it graded
+    the missed guess 'fail', the learner would have been penalized for a
+    lesson that never happened."""
+
+    def test_fail_on_untaught_is_rejected_loudly(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("beta", "fail", "missed the guess")))
+        with self.assertRaisesRegex(S.IntegrityError, "cannot fail before"):
+            S.cmd_commit_grades(self.dir, p)
+        # all-or-nothing: nothing was applied
+        self.assertEqual(self.rec("beta")["status"], "untaught")
+
+    def test_taught_after_a_missed_guess_is_the_sanctioned_path(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("beta", "taught",
+                                          "guessed SRAM before instruction")))
+        S.cmd_commit_grades(self.dir, p)
+        r = self.rec("beta")
+        self.assertEqual((r["status"], r["interval"]), ("active", 1))
+
+    def test_fail_on_a_taught_concept_still_works(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "fail", "real lapse")))
+        S.cmd_commit_grades(self.dir, p)
+        self.assertEqual(self.rec("alpha")["fails"], 1)
+
+
 class TestAgentFacingErrors(CourseCase):
 
     def test_wrong_directory_says_what_to_do(self):

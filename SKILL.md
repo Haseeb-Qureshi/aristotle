@@ -79,7 +79,14 @@ time, which is the most useful thing you can know before you start.
 
 **Open with a payoff, not a quiz.** For something new, pose the question
 and ask them to guess *before* you explain — a wrong guess primes the
-correction.
+correction. But a guess-first opener is a **teaching move, wearing
+teaching manners**: phrase the question in plain words you build
+yourself — never spend a bank quiz item on an untaught concept, because
+its answer key assumes vocabulary you haven't introduced yet. And when
+the guess comes back, respond by *teaching* ("close — HBM is one; the
+other is something I haven't shown you yet"), never by *scoring* ("half
+right"). A pre-instruction miss is material, not evidence: the first
+grade an untaught concept can ever earn is `taught`.
 
 **Bookend the session.** Begin your first message with
 `<course> · Session N —` (the `course:` line `begin` printed) and begin
