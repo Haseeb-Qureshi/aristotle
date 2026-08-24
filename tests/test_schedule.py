@@ -1086,9 +1086,12 @@ class TestBeginClose(CourseCase):
             S.cmd_begin(self.dir)
 
     def test_begin_caps_the_queue_by_session_type(self):
+        """A teaching session quizzes at most TEACHING_CAP due items —
+        4 due, cap 2 (since 2026-08-24): the rest roll forward."""
         for cid in ("beta", "gamma", "delta"):
             self.set_record(cid, status="active", next="2026-07-01")
-        self.assertIn("quiz these (3)", S.cmd_begin(self.dir))
+        self.assertIn(f"quiz these ({S.TEACHING_CAP})", S.cmd_begin(self.dir))
+        self.assertEqual(S.TEACHING_CAP, 2)
 
     def test_begin_issues_a_fractional_token_for_a_repair(self):
         self.set_meta(**{"repair-pending": "alpha"})

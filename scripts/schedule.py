@@ -50,7 +50,14 @@ COURSE_STATUSES = {"active", "paused", "maintenance", "closed"}
 UNIT_STATUSES = {"untouched", "in-progress", "taught"}
 SENTINEL = ".session-inprogress"
 QUEUE_CAP = 5
-TEACHING_CAP = 3          # cap when the session also teaches new material
+TEACHING_CAP = 2          # cap when the session also teaches new material.
+                          # Was 3: with 1-new-concept-per-session and the
+                          # early rungs clustering at +1/+3/+7 days, every
+                          # mid-unit session ran at max density (3 reviews +
+                          # teach + interleaved) and lessons felt like quiz
+                          # grinds (learner feedback, 2026-08-24). Overflow
+                          # rolls forward harmlessly; review/consolidation
+                          # sessions still use QUEUE_CAP.
 PLATEAU_FAILS = 3
 STALE_HOURS = 2           # a sentinel younger than this means a session is LIVE
 DORMANT_DAYS = 14
