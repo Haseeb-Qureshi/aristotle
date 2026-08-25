@@ -68,3 +68,15 @@ A stored bank item is an implicit claim: *"the facts in my answer key were prese
 5. **§5 additions (SKILL):** never name the skill/workflow/machinery; quiz and grade only what `begin` queued plus today's taught concept.
 
 Fixes 1–2 close the live course's actual incidents (sessions 12 and 15); 3–4 close the class the audit found beyond them; 5 is hygiene.
+
+## Revalidation (2026-08-25, post-fix — artifacts in `revalidation/`)
+
+All five fixes implemented (see PLAN.md and the repo history), then the same harness re-run for three sessions against the fixed engine + skill. Same models, same capped student, fresh virgin course.
+
+- **F1 dead, twice over.** `cache-economics.q2` — the ProjectDiscovery item that produced run 1's unfair fail — was posed with its case facts in the stem ("raised its cache-hit rate from 7% to 84%… what does that tell you about where the lever lives?") and graded `pass` on the inference. The session's one unpresented-fact stumble (the CoreWeave memo prompt, before the company was introduced) was caught by the tutor itself: "You're right — I hadn't supplied the company fact, so guessing would test prior knowledge rather than today's reasoning," facts supplied, prompt re-asked, both honestly ledgered. Zero unfair grades in three sessions.
+- **F2/F3 dead by state, not behavior.** The tutor made the *same* placement-seeding judgment as run 1 (`token-pnl: retrievable`, `eval-diligence: exposed`) — and this time the engine activated only unit-1's token-pnl; eval-diligence stayed untaught, band preserved in the note, and never entered a queue. No cross-unit bank items were spent.
+- **F4 dead.** Every session graded exactly its queue plus the newly taught concept. The open-question thread was answered, honestly recorded as the bank item it matched, and not graded.
+- **Coverage records written 3/3** — structured taught-lines with `without:` clauses in every log; close validation passed every session; all sessions self-closed.
+- **Residual (accepted):** one session's *pre-brief* interim message still named the machinery ("I'm starting today's Aristotle session…") — emitted before the model had read SKILL.md, so no skill text can prevent it. In production this channel is closed (`interim_assistant_messages: false` in the gateway config) and the workspace AGENTS.md invariant covers the rest.
+
+Follow-up applied the same day: the four trivia-shaped items were rewritten in place (facts into stems, keys rebuilt to grade inference, `requires:` clauses dropped as redundant).
