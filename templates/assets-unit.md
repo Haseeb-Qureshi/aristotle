@@ -24,12 +24,19 @@
      to be freshly built cases anyway. Date every perishable figure
      inline ("as of <month year>") so the runtime tutor knows what to
      refresh and the learner hears figures with their vintage.
+
+     If an item's KEY demands case facts (names, numbers, events) that
+     its own stem does not supply, append `| requires: <those facts>`.
+     The session checks that clause against the presented record and
+     puts unmet facts into the question instead of the answer key.
+     Prefer stems that carry their own case — see bootstrap.md,
+     concept-probes vs case-probes.
 -->
 <!-- aristotle:assets unit: NN -->
 
 ## concept: concept-id
 - quiz: <question, cold-retrievable in one line> | a: <expected answer> | distractor: M1
-- quiz: <a case-judgment item if this concept's terminal use is judgment rather than recall> | a: <key> | distractor: M2
+- quiz: <a case-judgment item if this concept's terminal use is judgment rather than recall> | a: <key> | distractor: M2 | requires: <case facts the key demands beyond the stem>
 - example: worked | <fully worked example, shown at first teaching>
 - apply: <application prompt; required for verify:use concepts>
 

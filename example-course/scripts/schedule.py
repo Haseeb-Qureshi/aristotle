@@ -476,6 +476,75 @@ def parse_log_grades(text: str):
     return session, grades
 
 
+# --------------------------------------------------------- taught ledger
+
+# A stored bank item is an implicit claim: "the facts in my answer key
+# were presented to this learner". Nothing recorded fact-level coverage,
+# so the claim was unverifiable at ask time and a later session could
+# open cold on a case the teaching session had elided — then grade the
+# miss a fail (audit 2026-08-25). '## taught' is the coverage record:
+# one line per concept, what was presented and what was held back.
+TAUGHT_HEAD_RE = re.compile(r"^##+\s*taught\s*$", re.M | re.I)
+TAUGHT_LINE_RE = re.compile(r"^- (\S+):\s+(.+)$")
+WITHOUT_SEP = " | without: "
+
+
+def _section(text: str, head_re) -> str:
+    """The body under a '## <heading>', up to the next '## ' or the end."""
+    m = head_re.search(text)
+    if not m:
+        return ""
+    rest = text[m.end():]
+    nxt = re.search(r"^##+\s", rest, re.M)
+    return rest[:nxt.start()] if nxt else rest
+
+
+def _taught_items(text: str):
+    """[(id, presented, without)] from one log's '## taught' section.
+
+    Lines that are not '- <id>: <text>' are legacy prose summaries and
+    are ignored, so every log written before the grammar existed still
+    reads. The presented text is free prose and may contain '|', so the
+    LAST ' | without: ' is the separator."""
+    out = []
+    for raw in _section(text, TAUGHT_HEAD_RE).splitlines():
+        m = TAUGHT_LINE_RE.match(raw.strip())
+        if not m:
+            continue
+        body = m.group(2).strip()
+        head, sep, tail = body.rpartition(WITHOUT_SEP)
+        out.append((m.group(1), head.strip() if sep else body,
+                    tail.strip() if sep else ""))
+    return out
+
+
+def _log_token(path: Path, text: str) -> str:
+    """Which session a log belongs to: its own 'session:' line, falling
+    back to the token in the filename."""
+    for line in text.splitlines():
+        if line.strip().startswith("session:"):
+            tok = line.split(":", 1)[1].strip()
+            if valid_session_token(tok):
+                return tok
+            break
+    m = re.match(r"\d{4}-\d\d-\d\d-(.+)\.md$", path.name)
+    return m.group(1) if m else path.stem
+
+
+def _taught_history(course: Path):
+    """{id: [(session, presented, without)]} over every log, oldest
+    first. Ids are matched case-insensitively — tutors do not capitalize
+    consistently."""
+    out = {}
+    for path in sorted((Path(course) / "log").glob("*.md")):
+        text = _read(path)
+        tok = _log_token(path, text)
+        for cid, presented, without in _taught_items(text):
+            out.setdefault(cid.casefold(), []).append((tok, presented,
+                                                       without))
+    return out
+
+
 # ----------------------------------------------------- transition table
 
 def ladder_up(iv: int) -> int:
@@ -561,7 +630,8 @@ def _next_unit_prereq_ids(course: Path):
 
 def cmd_commit_grades(course: Path, logfile: Path):
     course = Path(course)
-    session, grades = parse_log_grades(_read(Path(logfile)))
+    text = _read(Path(logfile))
+    session, grades = parse_log_grades(text)
     meta, records = load_state(course)
     if session in meta["committed-sessions"]:
         return "noop"  # replay after crash/redo: exact-string guard
@@ -584,6 +654,16 @@ def cmd_commit_grades(course: Path, logfile: Path):
             "cannot fail before it was taught. If they missed a "
             "pre-instruction guess, teach it and grade 'taught' with the "
             "miss in the note.")
+    # a 'taught' grade asserts coverage. Without the matching taught-line
+    # the next session cannot tell a fair probe from one about material
+    # that was elided, so the claim must come with the record.
+    covered = {cid.casefold() for cid, _, _ in _taught_items(text)}
+    for g in grades:
+        if g["result"] == "taught" and g["id"].casefold() not in covered:
+            raise IntegrityError(
+                f"log error: concept '{g['id']}' is graded taught but has no "
+                f"'- {g['id']}: ...' line under '## taught' — record what you "
+                "presented (and what you skipped) before closing.")
     needs = _next_unit_prereq_ids(course)
     today = _today(course)
     for g in grades:
@@ -646,14 +726,27 @@ def cmd_seed(course: Path, cid: str, evidence: str):
         raise IntegrityError(f"seed: {cid!r} is not in the domain map")
     meta, records = load_state(course)
     today = _today(course)
-    iv = SEED_INTERVAL[evidence]
-    records[cid] = {   # upsert: rerunning session 1 cannot duplicate rows
+    header, units = parse_plan(course)
+    unit = unit_of_concept(units, cid)
+    row = {   # upsert: rerunning session 1 cannot duplicate rows
         "id": cid, "verify": concepts[cid]["verify"],
-        "status": "active" if evidence != "none" else "untaught",
-        "last": today.isoformat(),
-        "next": (today + dt.timedelta(iv)).isoformat(),
-        "interval": iv, "fails": 0, "note": f"placement: {evidence}",
+        "fails": 0, "note": f"placement: {evidence}",
     }
+    if unit is not None and not unit_is_reached(unit, session_index(header)):
+        # a placement answer is calibration evidence, not spaced-retrieval
+        # evidence. Activating a far-future concept queued it for months
+        # of sessions with no presented facts to probe and no spendable
+        # bank (audit 2026-08-25, F3); the note is what lets the tutor
+        # compress the teaching when the unit finally opens.
+        row.update({"status": "untaught", "last": "-", "next": "-",
+                    "interval": 0})
+    else:
+        iv = SEED_INTERVAL[evidence]
+        row.update({"status": "active" if evidence != "none" else "untaught",
+                    "last": today.isoformat(),
+                    "next": (today + dt.timedelta(iv)).isoformat(),
+                    "interval": iv})
+    records[cid] = row
     save_state(course, meta, records)
 
 
@@ -883,6 +976,40 @@ def validate_assets(unit, assets, concepts, where="", first_unit=False):
 
 def assets_path(course: Path, num: int) -> Path:
     return Path(course) / "assets" / f"unit-{num:02d}.md"
+
+
+def unit_is_reached(unit, idx: int) -> bool:
+    """Has the course arrived at this unit? Started (any status but
+    untouched), or the session counter is inside it — so unit 1 is
+    reached during placement."""
+    return unit["status"] != "untouched" or unit["start"] <= idx <= unit["end"]
+
+
+def spendable_banks(course: Path):
+    """Asset files of reached units. A bank item is single-use for the
+    whole COURSE, so spending a far-future unit's item now kills it for
+    the session that was built around it — and that unit's material was
+    never presented, so the item cannot be graded fairly anyway."""
+    header, units = parse_plan(course)
+    idx = session_index(header)
+    out = []
+    for u in units:
+        if u.get("num") is None or not unit_is_reached(u, idx):
+            continue          # a review block owns no assets
+        path = assets_path(course, u["num"])
+        if path.exists():
+            out.append(f"assets/{path.name}")
+    return out
+
+
+def unit_of_concept(units, cid: str):
+    """The unit that teaches this concept, or None."""
+    for u in units:
+        if u.get("num") is None:
+            continue
+        if cid.casefold() in [c.casefold() for c in u["concepts"]]:
+            return u
+    return None
 
 
 # ------------------------------------------------------------------ check
@@ -1196,6 +1323,34 @@ def _commit(course, message):
 
 # ---------------------------------------------------------------- recover
 
+def _repair_missing_taught(path: Path):
+    """Recovery-only. A live tutor that forgets a coverage line gets the
+    hard error and fixes its own log; by the time recovery replays one,
+    nobody is around to fix anything — so stub the line conservatively
+    (nothing claimed presented) rather than let the replay reject the
+    log and destroy a whole session's grades."""
+    text = _read(path)
+    try:
+        _, grades = parse_log_grades(text)
+    except (FormatError, IntegrityError):
+        return
+    covered = {cid.casefold() for cid, _, _ in _taught_items(text)}
+    missing = [g["id"] for g in grades if g["result"] == "taught"
+               and g["id"].casefold() not in covered]
+    if not missing:
+        return
+    stubs = "".join(
+        f"- {cid}: (unrecorded — log recovered without a coverage line; "
+        "treat nothing as presented)\n" for cid in missing)
+    m = TAUGHT_HEAD_RE.search(text)
+    if m:
+        at = m.end() + (1 if text[m.end():m.end() + 1] == "\n" else 0)
+        text = text[:at] + stubs + text[at:]
+    else:
+        text = text.rstrip("\n") + "\n\n## taught\n" + stubs
+    path.write_text(text, encoding="utf-8")
+
+
 def cmd_recover(course: Path):
     """Three-way recovery, decidable from structure alone.
 
@@ -1228,6 +1383,7 @@ def cmd_recover(course: Path):
     logs = sorted((course / "log").glob(f"*-{session}.md"))
     if logs:
         try:
+            _repair_missing_taught(logs[-1])  # recovery favors keeping grades
             cmd_commit_grades(course, logs[-1])  # no-op if already applied
             sentinel.unlink()
             _commit(course, f"recover: replayed session {session}")
@@ -1279,13 +1435,8 @@ BANK_ID_RE = re.compile(r"^\S+\.(?:q|apply|int|ex)\d*$", re.I)
 
 
 def _asked_items(text: str):
-    m = ASKED_HEAD_RE.search(text)
-    if not m:
-        return []
-    rest = text[m.end():]
-    nxt = re.search(r"^##+\s", rest, re.M)
-    scope = rest[:nxt.start()] if nxt else rest
-    return [ln.strip()[2:].strip() for ln in scope.splitlines()
+    return [ln.strip()[2:].strip()
+            for ln in _section(text, ASKED_HEAD_RE).splitlines()
             if ln.strip().startswith("- ") and ln.strip()[2:].strip()]
 
 
@@ -1307,6 +1458,27 @@ def _asked_history(course: Path):
                 seen.add(item.casefold())
                 recent.append((tok, item))
     return recent, sorted(bank, key=str.casefold)
+
+
+def _unreached_bank_warnings(course: Path, text: str):
+    """Advisory only: bank items this log spent out of a unit the course
+    has not reached yet. Never a failure — the item is already burned by
+    the time close runs, and refusing the close would strand the
+    session; the warning is the trace the next author gets."""
+    header, units = parse_plan(course)
+    idx = session_index(header)
+    out = []
+    for item in _asked_items(text):
+        head = item.split()[0]
+        if not BANK_ID_RE.match(head):
+            continue          # free-text case signatures fence nothing
+        unit = unit_of_concept(units, head.rsplit(".", 1)[0])
+        if unit is None or unit_is_reached(unit, idx):
+            continue
+        out.append(f"warn: asked item '{head}' belongs to unit "
+                   f"{unit['num']}, which is unreached — that bank item is "
+                   "now spent for the whole course.")
+    return out
 
 
 def _last_log(course: Path):
@@ -1419,6 +1591,24 @@ def cmd_begin(course: Path):
     if bank:
         lines.append("bank items used (single-use, never repeat): "
                      + ", ".join(bank))
+
+    # --- coverage: what these concepts were actually SHOWN ------------
+    if ids:
+        taught = _taught_history(course)
+        lines.append("presented (grade only against this; anything absent "
+                     "goes INTO the question):")
+        for cid in ids:
+            entries = taught.get(cid.casefold(), [])
+            if not entries:
+                lines.append(f"  {cid}: (nothing recorded as presented — "
+                             "supply all facts in any probe)")
+            for tok, presented, without in entries:
+                lines.append(f"  {cid} [{tok}]: {presented}"
+                             + (f"{WITHOUT_SEP}{without}" if without else ""))
+        lines.append("banks spendable: "
+                     + (", ".join(spendable_banks(course)) or "-")
+                     + " — items from unreached units are off-limits")
+
     if state == "reset" and abandoned_age is not None:
         hrs = int(abandoned_age.total_seconds() // 3600)
         lines.append(
@@ -1440,7 +1630,11 @@ def cmd_close(course: Path, logfile: Path):
     logfile = Path(logfile)
     if not logfile.is_absolute():
         logfile = course / logfile if not logfile.exists() else logfile
-    session, _ = parse_log_grades(_read(logfile))
+    text = _read(logfile)
+    session, _ = parse_log_grades(text)
+    # the fence is read BEFORE the close moves the counter and the unit
+    # statuses: what was reachable when the question was asked
+    warnings = _unreached_bank_warnings(course, text)
 
     sentinel = course / SENTINEL
     if sentinel.exists():
@@ -1477,8 +1671,8 @@ def cmd_close(course: Path, logfile: Path):
         sentinel.unlink()
         _commit(course, f"session {session}: unlock")
     nxt = session_index(parse_plan(course)[0])
-    return (f"closed session {session} ({applied})\n"
-            f"next: {nxt}/{course_size(header)}")
+    return "\n".join([f"closed session {session} ({applied})",
+                      f"next: {nxt}/{course_size(header)}"] + warnings)
 
 
 # -------------------------------------------------------------------- cli

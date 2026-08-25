@@ -164,6 +164,27 @@ Then work, in order:
    running that day.)
    Give every keystone at least one `misconceptions:` entry in the map —
    a keystone with none has nothing for its rubric to warn against.
+
+   **Concept-probes vs case-probes.** A key graded on reasoning is
+   freely reusable — any tutor can ask it of anyone who met the
+   concept. A key that demands specific case evidence (a company, a
+   number, an event) is fair only if the stem supplies that evidence or
+   the teaching session actually presented it, and from here you cannot
+   know which cases a twelve-minute session will fit in. **Prefer stems
+   that carry their own case.** Where a key still demands outside
+   facts, name them:
+
+   ```
+   - quiz: <stem> | a: <key> | distractor: M1 | requires: <case facts the key demands that the stem does not supply>
+   ```
+
+   The runtime tutor spends the item as written only if every
+   `requires:` fact is in the session's presented record; otherwise it
+   weaves those facts into the stem and grades the inference that
+   remains. So run the file once more as a checklist: for **every** case
+   fact an answer key demands, decide where it lives — in the stem, in a
+   `requires:` clause, or in the concept's teaching notes so that the
+   session teaching it presents it.
 8. **Write the directory** (§6), then run `S check` and fix everything it
    reports. It validates the DAG, cross-file ids, the session arithmetic,
    and asset quality.
@@ -256,7 +277,14 @@ there's a session 2.
    S seed <concept-id> <none|exposed|retrievable>
    ```
    `retrievable` schedules a real interval, so a concept they already
-   know won't come back tomorrow.
+   know won't come back tomorrow. **Seeds activate only in units the
+   course has reached**: on a concept whose unit is still untouched the
+   band is recorded as a note and nothing else — the engine enforces
+   this, and that note is what lets the unit's own session teach it
+   fast. A placement answer is calibration evidence, not
+   spaced-retrieval evidence; activating a far-future concept puts it in
+   every queue months early, with no presented facts to probe and no
+   spendable bank but its far-future unit's.
 4. **Write the baseline.** Append to `history.md` under `## baseline`:
    one probe question and their answer, both verbatim. Graduation shows
    them this delta; it is the payoff for the whole course, and nothing

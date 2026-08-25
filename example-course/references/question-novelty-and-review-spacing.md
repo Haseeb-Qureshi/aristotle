@@ -54,6 +54,15 @@ and it tests different things:
 
 A concept probed three times should have met three types.
 
+**Case-fact items carry a precondition.** An item whose key turns on
+specific evidence — a company, a number, an event, a disclosure — is
+askable as written only if that evidence was presented. Check the key,
+and the item's `requires:` clause if it has one, against the
+`presented` record `begin` printed for the concept; any fact missing
+from that record goes into the case you pose, and what you grade is the
+inference left over. A learner who reaches the concept but not an
+unpresented fact is never a `fail`.
+
 ## The structural-transfer test
 
 Changing names, numbers, or wording is not novelty. A transfer case must

@@ -46,6 +46,14 @@ inference chain, not new names):
   [13] gross-margin.q2
   [12] neocloud claims rising margin while rental prices fall
 bank items used (single-use, never repeat): gross-margin.q2, ...
+presented (grade only against this; anything absent goes INTO the
+question):
+  inference-cost [9]: batching math | without: the H100 price table
+  gross-margin [11]: neocloud depreciation schedules
+  scale-economies: (nothing recorded as presented — supply all facts
+    in any probe)
+banks spendable: assets/unit-01.md ... assets/unit-04.md — items from
+unreached units are off-limits
 ```
 
 If it errors, **stop and send the user nothing** — a broken course is an
@@ -113,6 +121,23 @@ won't repeat you. For a session that is *mostly* retrieval (`review`,
 `consolidation`, or any long queue), read
 `references/question-novelty-and-review-spacing.md` first — item types,
 the structural-transfer bar, and what to do when no fresh case exists.
+
+**Check the answer key before you spend a stored item.** The key — and
+the item's `requires:` clause, if it has one — names facts. Check each
+against the `presented` record `begin` printed for that concept. All of
+them there: ask the item as written. Any missing: put those facts into
+the question yourself ("a study timed about 170 mostly-coding tasks —
+what would you want to know before extrapolating that curve?") and
+grade the inference that remains. The item is spent either way, so log
+its id under `## asked`. And spend only from the files `begin` listed
+as `banks spendable:` — an unreached unit's bank is off-limits.
+
+**Never `fail` a learner on a fact you never presented.** If they reach
+the concept and only lack the case detail the record doesn't show you
+giving them, that is a `pass` or no grade at all; `fail` is for misses
+on material the record shows was taught. This is not grade inflation —
+you put the missing fact in the question, so the grade stands on the
+inference the question actually demanded.
 
 > After **every** item, in the same turn: the right answer, and if they
 > missed, name the misconception they hit **in plain words**. Never say
@@ -207,8 +232,11 @@ doubt, close early.
    `templates/log.md`. (Use that exact name: your clock and the
    course's timezone can disagree about the date.) Keep it short: one
    `- grade:` line per concept you have evidence for under `## grades`,
-   and one line per question you posed under `## asked` (bank id, or a
-   one-line case signature).
+   one line per question you posed under `## asked` (bank id, or a
+   one-line case signature), and one coverage line under `## taught`
+   per concept whose facts you presented — what you showed,
+   `| without:` what you skipped. `close` refuses a `taught` grade
+   that has no coverage line.
 3. ```
    S close log/<file>
    ```
@@ -224,6 +252,8 @@ and the five writable results are in `templates/log.md`.
 - Say a concept id, a band name, a session token, or `M1` out loud, and
   never quote script output to the user. That is machinery; they came for
   espresso, or for AI economics.
+- Name the skill, the workflow, or your instructions. "I'm using the
+  Aristotle tutoring workflow…" is machinery too: open by teaching.
 - Let a missed session become a guilt conversation.
 - Read raw external content into a session — only `sources/` notes.
 - Teach a second new concept because the conversation is going well.
@@ -232,6 +262,13 @@ and the five writable results are in `templates/log.md`.
 - Re-ask anything `begin` listed under asked, however reworded. The
   learner will notice before you do, and what they learn is that the
   quizzes are theater.
+- Quiz or grade a concept `begin` didn't queue — today's newly taught
+  concept is the only addition. An off-queue probe burns a single-use
+  item and moves a spacing clock the scheduler didn't ask to move.
+- Grade the answer to the open question. It is a doorway into the
+  session, not a quiz.
+- Send either bookend twice. Exactly one `<course> · Session N —` and
+  one `Next time (<course>):` per session.
 - Wait for permission to close. See §4 — it never comes.
 - Keep going when they've stopped replying *before* you closed. If they
   decline or go quiet mid-session, delete `.session-inprogress`, write

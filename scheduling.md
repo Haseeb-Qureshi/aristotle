@@ -102,7 +102,10 @@ So the search is deterministic, not a guess about topic words:
    messages between the marker and the end of the thread are what was
    actually covered.
 2. If a real lesson happened, write `log/<date>-<token>.md` from what was
-   actually taught and how the learner answered.
+   actually taught and how the learner answered — including a `## taught`
+   line for each concept the transcript shows was presented (`close`
+   requires one per `taught` grade), with anything the transcript does
+   not clearly show under `without:`.
 3. **Grade `taught` only — never `pass`, `fail`, or `rubric-*`.** You
    did not witness the retrieval, so you may not award evidence. Note
    "reconstructed" in each grade line.

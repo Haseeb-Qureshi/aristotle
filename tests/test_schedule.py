@@ -143,11 +143,17 @@ ASSETS_U2 = """\
 """
 
 
-def log_text(session, *grades, extra=""):
+def log_text(session, *grades, extra="", taught=None):
+    """A well-formed session log. Every 'taught' grade gets its coverage
+    line under '## taught' — close refuses the log without one. Pass
+    `taught` to write that section by hand (or leave it old-format)."""
     body = "\n".join(
         f"- grade: {cid} | result: {res} | note: {note}"
         for cid, res, note in grades)
-    return (f"session: {session}\n\n## taught\nstuff\n\n"
+    if taught is None:
+        taught = "\n".join(f"- {cid}: presented the core of {cid}"
+                           for cid, res, _ in grades if res == "taught")
+    return (f"session: {session}\n\n## taught\n{taught or 'stuff'}\n\n"
             f"## grades\n{body}\n\n## open question\n{extra}\n")
 
 
@@ -1230,6 +1236,20 @@ class TestRecover(CourseCase):
         self.assertEqual(S.cmd_recover(self.dir), "reset")
         self.assertFalse((self.dir / "scratch.md").exists())
 
+    def test_recovery_stubs_a_missing_taught_line_rather_than_reset(self):
+        """A live tutor gets the hard error and fixes its own log;
+        recovery has nobody around to fix anything, so it stubs the
+        coverage line conservatively instead of discarding a whole
+        session's grades."""
+        self.git_init()
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("beta", "taught", "intro"),
+                                    taught=""))
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "replayed")
+        self.assertEqual(self.rec("beta")["interval"], 1)
+        self.assertIn("- beta: (unrecorded", p.read_text(encoding="utf-8"))
+
     def test_an_unusable_log_falls_back_to_reset(self):
         self.git_init()
         self.write_log("2026-07-21-2.md",
@@ -1399,6 +1419,247 @@ class TestAskedLedger(CourseCase):
         out = S.cmd_begin(self.dir)
         self.assertNotIn("asked recently", out)
         self.assertNotIn("bank items used", out)
+
+
+# ======================================================== taught ledger
+
+class TestTaughtLedger(CourseCase):
+    """A stored bank item is an implicit claim: 'the facts in my answer
+    key were presented to this learner.' Nothing recorded fact-level
+    coverage, so a session could open cold on a case the teaching session
+    had elided — and grade the miss a fail (audit 2026-08-25, F1).
+    '## taught' is now the coverage record, and `begin` replays it."""
+
+    def taught_log(self, name, session, taught, grade=None, asked=""):
+        cid, res, note = grade or ("alpha", "pass", "ok")
+        return self.write_log(name, (
+            f"session: {session}\n\n## taught\n{taught}\n\n"
+            f"## grades\n- grade: {cid} | result: {res} | note: {note}\n\n"
+            f"## asked\n{asked}\n\n## open question\nhook\n"))
+
+    def test_a_taught_line_parses_with_and_without_its_clause(self):
+        self.taught_log("2026-07-19-2.md", "2",
+                        "- alpha: cache pricing; session reuse | without: the "
+                        "ProjectDiscovery case\n"
+                        "- beta: paid writes vs discounted reads")
+        h = S._taught_history(self.dir)
+        self.assertEqual(h["alpha"], [("2", "cache pricing; session reuse",
+                                       "the ProjectDiscovery case")])
+        self.assertEqual(h["beta"],
+                         [("2", "paid writes vs discounted reads", "")])
+
+    def test_a_pipe_in_the_presented_text_does_not_split_the_clause(self):
+        """The presented text is free prose; only the LAST separator is
+        the without-clause."""
+        self.taught_log("2026-07-19-2.md", "2",
+                        "- alpha: writes | reads | reuse | without: the case")
+        entry = S._taught_history(self.dir)["alpha"][0]
+        self.assertEqual(entry[1:], ("writes | reads | reuse", "the case"))
+
+    def test_legacy_prose_under_taught_is_ignored_not_fatal(self):
+        self.taught_log("2026-07-19-2.md", "2",
+                        "covered cache economics and the pricing table")
+        self.assertEqual(S._taught_history(self.dir), {})
+
+    def test_ids_match_case_insensitively(self):
+        self.taught_log("2026-07-19-2.md", "2", "- Alpha: the pricing table")
+        self.assertIn("alpha", S._taught_history(self.dir))
+
+    def test_every_session_that_presented_it_is_kept_in_order(self):
+        self.taught_log("2026-07-18-2.md", "2", "- alpha: the pricing table")
+        self.taught_log("2026-07-19-3.md", "3", "- alpha: writes vs reads")
+        self.assertEqual([e[0] for e in S._taught_history(self.dir)["alpha"]],
+                         ["2", "3"])
+
+    def test_begin_replays_the_record_for_every_queued_concept(self):
+        self.taught_log("2026-07-19-2.md", "2",
+                        "- alpha: the pricing table | without: the PD case")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("presented (grade only against this; anything absent "
+                      "goes INTO the question):", out)
+        self.assertIn("  alpha [2]: the pricing table | without: the PD case",
+                      out)
+
+    def test_a_queued_concept_with_no_record_says_so(self):
+        out = S.cmd_begin(self.dir)
+        self.assertIn("  alpha: (nothing recorded as presented — supply all "
+                      "facts in any probe)", out)
+
+    def test_only_queued_concepts_are_replayed(self):
+        """beta was taught but is not due — replaying it would invite a
+        probe the scheduler did not ask for."""
+        self.taught_log("2026-07-19-2.md", "2", "- beta: the second thing")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("alpha:", out)
+        self.assertNotIn("beta [2]", out)
+
+    def test_an_empty_quiz_queue_prints_neither_block(self):
+        self.set_record("alpha", next="2099-01-01")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("quiz these (0)", out)
+        self.assertNotIn("presented (", out)
+        self.assertNotIn("banks spendable", out)
+
+    def test_close_refuses_a_taught_grade_with_no_taught_line(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("beta", "taught", "intro"),
+                                    taught="a prose summary of the session"))
+        with self.assertRaisesRegex(S.IntegrityError, "graded taught"):
+            S.cmd_commit_grades(self.dir, p)
+        # a failed close leaves the course untouched
+        self.assertEqual(self.rec("beta")["status"], "untaught")
+        self.assertNotIn("2", self.state()[0]["committed-sessions"])
+
+    def test_close_accepts_a_taught_grade_with_its_line(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("beta", "taught", "intro"),
+                                    taught="- beta: the definition | "
+                                           "without: the worked example"))
+        S.cmd_commit_grades(self.dir, p)
+        self.assertEqual(self.rec("beta")["status"], "active")
+
+    def test_the_taught_line_may_be_capitalised_differently(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("beta", "taught", "intro"),
+                                    taught="- Beta: the definition"))
+        S.cmd_commit_grades(self.dir, p)
+        self.assertEqual(self.rec("beta")["status"], "active")
+
+    def test_a_non_taught_grade_needs_no_line(self):
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "clean")))
+        self.assertEqual(S.cmd_commit_grades(self.dir, p), "applied")
+
+    def test_old_format_logs_never_break_begin_or_close(self):
+        """Every log written before the grammar existed carries one prose
+        line under '## taught'. They must stay readable forever."""
+        self.taught_log("2026-07-18-2.md", "2", "stuff we did")
+        S.cmd_begin(self.dir)
+        p = self.write_log("2026-07-21-2.md",
+                           log_text("2", ("alpha", "pass", "clean")))
+        S.cmd_close(self.dir, p)
+        self.assertEqual(S.parse_plan(self.dir)[0]["next-session"], "3/10")
+
+
+# =========================================================== bank fence
+
+class TestBankFence(CourseCase):
+    """Two audit sessions spent unit-6 bank items to quiz a concept that
+    was never taught (F2). Bank items are single-use for the whole
+    course, so unit 6 would have arrived with its best items dead and the
+    ledger forbidding them. `begin` names the spendable banks; `close`
+    says so out loud when a far-future one was burned."""
+
+    def asked_log(self, name, session, *items):
+        lines = "\n".join(f"- {i}" for i in items)
+        return self.write_log(name, (
+            f"session: {session}\n\n## taught\nstuff\n\n## grades\n"
+            f"- grade: alpha | result: pass | note: ok\n\n"
+            f"## asked\n{lines}\n\n## open question\nhook\n"))
+
+    def use_plan(self, text):
+        (self.dir / "plan.md").write_text(text, encoding="utf-8")
+
+    def test_only_a_reached_units_bank_is_spendable(self):
+        self.add_u2_assets()
+        self.assertIn("banks spendable: assets/unit-01.md — items from "
+                      "unreached units are off-limits", S.cmd_begin(self.dir))
+
+    def test_a_started_unit_joins_the_spendable_list(self):
+        self.add_u2_assets()
+        self.use_plan(PLAN_MD.replace("artifact-milestone: draft the thing\n"
+                                      "status: untouched",
+                                      "artifact-milestone: draft the thing\n"
+                                      "status: in-progress"))
+        self.assertIn("banks spendable: assets/unit-01.md, assets/unit-02.md",
+                      S.cmd_begin(self.dir))
+
+    def test_the_current_unit_is_reached_while_still_untouched(self):
+        """Session 4 sits inside unit 2; its status only moves at close."""
+        S.write_plan_header(self.dir, {"next-session": "4/10"})
+        self.add_u2_assets()
+        self.assertIn("assets/unit-02.md", S.cmd_begin(self.dir))
+
+    def test_an_unwritten_bank_is_not_listed(self):
+        out = S.cmd_begin(self.dir)
+        self.assertIn("banks spendable: assets/unit-01.md", out)
+        self.assertNotIn("unit-02.md", out)
+
+    def test_close_warns_when_an_unreached_units_item_was_spent(self):
+        S.cmd_begin(self.dir)
+        out = S.cmd_close(self.dir, self.asked_log(
+            "2026-07-21-2.md", "2", "gamma.q1"))
+        self.assertIn("warn: asked item 'gamma.q1' belongs to unit 2, which "
+                      "is unreached — that bank item is now spent for the "
+                      "whole course.", out)
+
+    def test_a_reached_item_free_text_and_unknown_ids_never_warn(self):
+        S.cmd_begin(self.dir)
+        out = S.cmd_close(self.dir, self.asked_log(
+            "2026-07-21-2.md", "2", "alpha.q1", "the sticker-vs-blended case",
+            "ghost.q7"))
+        self.assertNotIn("warn:", out)
+
+    def test_the_warning_never_fails_the_close(self):
+        self.cli("begin")
+        self.asked_log("2026-07-21-2.md", "2", "delta.q1")
+        r = self.cli("close", "log/2026-07-21-2.md")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warn: asked item 'delta.q1'", r.stdout)
+        self.assertEqual(S.parse_plan(self.dir)[0]["next-session"], "3/10")
+
+
+# ============================================================ seed fence
+
+class TestSeedFence(CourseCase):
+    """Placement seeded a unit-6 concept 'exposed' from one answer, which
+    put it in the retrieval queue of nearly every session that followed —
+    months before its unit, with no spendable bank and no presented facts
+    to probe (F3). Calibration evidence is not retrieval evidence."""
+
+    def test_a_reached_units_seed_still_activates(self):
+        S.cmd_seed(self.dir, "beta", "retrievable")
+        r = self.rec("beta")
+        self.assertEqual((r["status"], r["interval"], r["next"]),
+                         ("active", 7, "2026-07-28"))
+
+    def test_the_current_units_seed_activates_before_it_is_taught(self):
+        S.write_plan_header(self.dir, {"next-session": "4/10"})
+        S.cmd_seed(self.dir, "delta", "exposed")
+        self.assertEqual(self.rec("delta")["status"], "active")
+
+    def test_a_future_units_seed_is_a_note_and_nothing_else(self):
+        S.cmd_seed(self.dir, "delta", "retrievable")
+        r = self.rec("delta")
+        self.assertEqual((r["status"], r["next"], r["interval"], r["note"]),
+                         ("untaught", "-", 0, "placement: retrievable"))
+        self.assertNotIn("delta", S.build_queue(self.dir))
+
+    def test_a_future_seed_never_reaches_a_begin_queue(self):
+        S.cmd_seed(self.dir, "delta", "exposed")
+        self.assertNotIn("delta", S.cmd_begin(self.dir))
+
+    def test_a_concept_no_unit_teaches_is_not_fenced(self):
+        """Nothing will ever 'open' for it, so fencing would strand the
+        only evidence the course has."""
+        p = self.dir / "plan.md"
+        p.write_text(PLAN_MD.replace("concepts: [gamma, delta]",
+                                     "concepts: [gamma]"), encoding="utf-8")
+        S.cmd_seed(self.dir, "delta", "exposed")
+        self.assertEqual(self.rec("delta")["status"], "active")
+
+    def test_a_future_seed_is_idempotent(self):
+        S.cmd_seed(self.dir, "delta", "exposed")
+        S.cmd_seed(self.dir, "delta", "exposed")
+        self.assertEqual(len(self.state()[1]), 4)
+
+    def test_the_concept_still_teaches_normally_when_its_unit_opens(self):
+        S.cmd_seed(self.dir, "delta", "retrievable")
+        S.cmd_commit_grades(self.dir, self.write_log(
+            "2026-07-21-2.md", log_text("2", ("delta", "taught", "opened"))))
+        r = self.rec("delta")
+        self.assertEqual((r["status"], r["interval"], r["next"]),
+                         ("active", 1, "2026-07-22"))
 
 
 # ========================================================= review blocks
