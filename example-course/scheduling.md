@@ -86,8 +86,11 @@ off and the tutor kept waiting for a goodbye. The lesson is real; the
 record is empty.
 
 Symptom, checkable without any history: `.session-inprogress` exists, is
-**older than two hours**, and `log/` contains **no file whose name ends
-in that sentinel's token**.
+**older than two hours**, and the token's log file is **missing or still
+the empty draft `begin` created** (header and section heads, no grade
+lines). A draft that already holds grades needs no reconstruction —
+`recover` replays it as it stands; reconstruction is for recovering what
+the draft never received.
 
 If your platform can search past conversations, reconstruct rather than
 discard. **Sessions are bookended for exactly this** (`SKILL.md` §2):
@@ -101,8 +104,9 @@ So the search is deterministic, not a guess about topic words:
    `Next time:` follows the marker, that session was abandoned, and the
    messages between the marker and the end of the thread are what was
    actually covered.
-2. If a real lesson happened, write `log/<date>-<token>.md` from what was
-   actually taught and how the learner answered — including a `## taught`
+2. If a real lesson happened, complete the draft (or rewrite
+   `log/<date>-<token>.md` if it is gone) from what was actually taught
+   and how the learner answered — including a `## taught`
    line for each concept the transcript shows was presented (`close`
    requires one per `taught` grade), with anything the transcript does
    not clearly show under `without:`.

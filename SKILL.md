@@ -61,8 +61,9 @@ operator problem, not a lesson. Fix it if it's an asset file you wrote;
 otherwise leave the course alone and stay quiet. **One exception:** if
 the error says a session is already live and that lock is *yours* — you
 already ran `begin` in this conversation and were interrupted — nothing
-is broken. Say nothing about it, keep teaching from where you were, and
-close as normal. Never run `begin` twice in one session.
+is broken. Read the draft log first: it records exactly where you were.
+Say nothing about it, keep teaching from there, and close as normal.
+Never run `begin` twice in one session.
 
 **Pick up where they left off.** `last session` and `open question` are
 your continuity — that question was written at the last close *to be*
@@ -106,6 +107,17 @@ them is what was covered. **The course label is what keeps this working
 when several courses share one chat** — never drop it.
 That is what lets a future run reconstruct a lesson whose log was never
 written (see `scheduling.md`). Keep them plain — no ids, no tokens.
+
+**Write the log as you go.** `begin` already created today's log file
+(its `log file:` line) with the session token pinned — never invent a
+different name or number; close refuses a token the course isn't at.
+Append to the draft DURING the session: each question to `## asked` as
+you pose it, each coverage line to `## taught` as you present, each
+grade to `## grades` the moment the evidence lands. The draft is what
+survives a mid-lesson context loss: after any gap, read it before you
+say another word, and continue from what it records, not from what you
+remember. A crash mid-session now costs nothing already appended —
+recovery commits a draft that holds evidence.
 
 **Then the retrieval block.** Quiz exactly the concepts `begin` listed,
 cold. `begin` told you what is already spent: a stored bank item is used
@@ -228,15 +240,15 @@ doubt, close early.
    thing they got today, and the open question as a teaser. This is the
    last *teaching* message, and its prefix closes the bookend.
    Everything below this is silent.
-2. Write the file `begin` named on its `log file:` line — see
-   `templates/log.md`. (Use that exact name: your clock and the
-   course's timezone can disagree about the date.) Keep it short: one
-   `- grade:` line per concept you have evidence for under `## grades`,
-   one line per question you posed under `## asked` (bank id, or a
-   one-line case signature), and one coverage line under `## taught`
-   per concept whose facts you presented — what you showed,
-   `| without:` what you skipped. `close` refuses a `taught` grade
-   that has no coverage line.
+2. Finish the draft `begin` created on its `log file:` line — you have
+   been appending to it all session (§2); now write the open question
+   and check it against `templates/log.md`: one `- grade:` line per
+   concept you have evidence for, one `## asked` line per question
+   posed (bank id, or a one-line case signature), one `## taught`
+   coverage line per concept whose facts you presented — what you
+   showed, `| without:` what you skipped. `close` refuses a `taught`
+   grade with no coverage line, an evidence-free log, and any session
+   token the course isn't actually at.
 3. ```
    S close log/<file>
    ```

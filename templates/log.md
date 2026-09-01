@@ -1,6 +1,8 @@
-<!-- FORMAT — log/YYYY-MM-DD-<session>.md, written at close, before
-     `S close` is run. <session> is the token `S begin` printed: digits,
-     optional r-suffix for a repair (14, 14r, 14r2).
+<!-- FORMAT — log/YYYY-MM-DD-<session>.md. `S begin` CREATES this file
+     with the token pinned; append to it during the session and finish
+     it before `S close`. <session> is the token begin printed: digits,
+     optional r-suffix for a repair (14, 14r, 14r2). close refuses any
+     other token, and refuses a log with no grade lines.
 
      KEEP IT SHORT (~25 lines). Grade lines are the ONLY channel into the state
      machine, and only lines under `## grades` are read — an example

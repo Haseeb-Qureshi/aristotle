@@ -1729,6 +1729,100 @@ class TestReviewBlocks(CourseCase):
                          ["taught", "untouched"])
 
 
+class TestSequenceGuard(CourseCase):
+    """A log's session token must match where the course actually is.
+    Observed 2026-08-31: a context-scrambled tutor wrote 'session: 19'
+    while the course was at 18; commit accepted it and the review block
+    at index 18 was silently skipped forever."""
+
+    def test_commit_rejects_a_token_ahead_of_the_course(self):
+        p = self.write_log("2026-07-21-3.md",
+                           log_text("3", ("alpha", "pass", "clean")))
+        with self.assertRaises(S.IntegrityError) as cm:
+            S.cmd_commit_grades(self.dir, p)
+        self.assertIn("session '3'", str(cm.exception))
+        self.assertIn("at session 2", str(cm.exception))
+
+    def test_a_committed_token_replays_as_noop_never_a_second_apply(self):
+        iv = self.rec("alpha")["interval"]
+        p = self.write_log("2026-07-19-1.md",
+                           log_text("1", ("alpha", "pass", "clean")))
+        self.assertEqual(S.cmd_commit_grades(self.dir, p), "noop")
+        self.assertEqual(self.rec("alpha")["interval"], iv)
+
+    def test_repair_tokens_share_the_current_index(self):
+        p = self.write_log("2026-07-21-2r.md",
+                           log_text("2r", ("alpha", "pass", "clean")))
+        S.cmd_commit_grades(self.dir, p)  # must not raise
+        self.assertEqual(self.rec("alpha")["interval"], 3)
+
+    def test_commit_rejects_an_evidence_free_log(self):
+        """A draft with no grades must never advance the course — this is
+        what recovery finds after a session that never really happened."""
+        p = self.write_log("2026-07-21-2.md", log_text("2"))
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_commit_grades(self.dir, p)
+
+
+class TestDraftLog(CourseCase):
+    """begin creates the session's log file itself, pinning the token
+    mechanically — a tutor whose context is later lost reads the draft
+    instead of improvising, and evidence appended mid-session survives."""
+
+    def test_begin_writes_the_draft_with_the_pinned_token(self):
+        self.git_init()
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-2.md"
+        self.assertTrue(draft.exists())
+        text = draft.read_text(encoding="utf-8")
+        self.assertIn("session: 2", text)
+        for head in ("## taught", "## grades", "## asked",
+                     "## open question"):
+            self.assertIn(head, text)
+
+    def test_begin_never_clobbers_an_existing_log(self):
+        self.git_init()
+        p = self.dir / "log" / f"{TODAY}-2.md"
+        p.write_text("session: 2\n\n## grades\n- grade: alpha | "
+                     "result: pass | note: mine\n", encoding="utf-8")
+        S.cmd_begin(self.dir)
+        self.assertIn("note: mine", p.read_text(encoding="utf-8"))
+
+    def test_recovery_discards_an_evidence_free_draft(self):
+        self.git_init()
+        S.cmd_begin(self.dir)
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "reset")
+        self.assertFalse((self.dir / "log" / f"{TODAY}-2.md").exists())
+
+    def test_recovery_replays_a_partial_draft(self):
+        """A mid-session crash with one grade already appended commits
+        that grade instead of losing the whole session."""
+        self.git_init()
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-2.md"
+        text = draft.read_text(encoding="utf-8").replace(
+            "## grades\n",
+            "## grades\n- grade: alpha | result: pass | note: landed\n")
+        draft.write_text(text, encoding="utf-8")
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "replayed")
+        self.assertEqual(self.rec("alpha")["interval"], 3)
+
+    def test_recovery_resets_a_wrong_token_draft(self):
+        self.git_init()
+        self.write_log("2026-07-21-3.md",
+                       log_text("3", ("alpha", "pass", "clean")))
+        self.stale("3")
+        self.assertEqual(S.cmd_recover(self.dir), "reset")
+
+    def stale(self, token):
+        p = self.dir / S.SENTINEL
+        p.write_text(f"session: {token}\n", encoding="utf-8")
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+
+
 class TestUnjustFail(CourseCase):
     """A concept cannot fail before it was taught. The pilot's tutor used
     a bank quiz item as the door into an untaught concept; had it graded

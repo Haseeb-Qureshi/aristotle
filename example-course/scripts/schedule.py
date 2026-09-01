@@ -635,6 +635,22 @@ def cmd_commit_grades(course: Path, logfile: Path):
     meta, records = load_state(course)
     if session in meta["committed-sessions"]:
         return "noop"  # replay after crash/redo: exact-string guard
+    # the token is not the tutor's to choose. A context-scrambled tutor
+    # once wrote 'session: 19' while the course was at 18 — commit
+    # accepted it and the review block at 18 was silently skipped
+    # forever (2026-08-31).
+    idx = session_index(parse_plan(course)[0])
+    m = re.match(r"\d+", session)
+    if (m.group(0) if m else session) != str(idx):
+        raise IntegrityError(
+            f"log error: this log claims session '{session}' but the "
+            f"course is at session {idx} — run begin and use the exact "
+            "token on its 'log file:' line.")
+    if not grades:
+        raise IntegrityError(
+            "log error: no grade lines — a session with no evidence is "
+            "abandoned by deleting the sentinel and writing no log, "
+            "never by committing an empty one.")
     unknown = [g["id"] for g in grades if g["id"] not in records]
     if unknown:
         raise IntegrityError(
@@ -1620,6 +1636,17 @@ def cmd_begin(course: Path):
         lines.append(
             "NOTE: the previous session's close was recovered just now — "
             "its grades have only just been applied.")
+
+    # The draft pins the token mechanically and makes mid-session
+    # evidence durable: a tutor that loses its context mid-lesson reads
+    # this file instead of improvising, and grades already appended
+    # survive a crash (recovery replays any draft that holds evidence).
+    draft = course / "log" / f"{_today(course).isoformat()}-{token}.md"
+    if not draft.exists():
+        draft.parent.mkdir(exist_ok=True)
+        draft.write_text(
+            f"session: {token}\n\n## taught\n\n## grades\n\n## asked\n\n"
+            "## open question\n", encoding="utf-8")
     return "\n".join(lines)
 
 
