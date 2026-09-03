@@ -38,6 +38,9 @@ log file: log/2026-05-06-14.md
 unit: 4 — When is a moat not a moat?
 assets: assets/unit-04.md
 untaught here: switching-costs, data-network-effects
+  untaught means untaught — whatever you remember mentioning about
+  these, the learner has not been taught them; teach from the
+  worked example.
 quiz these (3): inference-cost, gross-margin, scale-economies
 last session: 13 on 2026-05-04 (2 days ago)
 open question: why is the cheapest chip in the rack the one nobody can buy?
@@ -69,6 +72,13 @@ Never run `begin` twice in one session.
 your continuity — that question was written at the last close *to be*
 today's way in. Use it. If the gap is long, say nothing about the gap
 (see `re-entry`); if it's short, just continue the thread.
+
+**Your memory is not the record.** If your platform keeps the chat
+thread across days, it holds teasers, open questions, and openers
+nobody answered. None of that was taught. `untaught here` and the
+`presented` record are the only truth about coverage: if `begin`
+lists a concept as untaught, teach it from the worked example,
+however clearly you remember mentioning it.
 
 `begin` may also print a **NOTE:**, and it changes how you open:
 
@@ -112,12 +122,14 @@ written (see `scheduling.md`). Keep them plain — no ids, no tokens.
 (its `log file:` line) with the session token pinned — never invent a
 different name or number; close refuses a token the course isn't at.
 Append to the draft DURING the session: each question to `## asked` as
-you pose it, each coverage line to `## taught` as you present, each
-grade to `## grades` the moment the evidence lands. The draft is what
-survives a mid-lesson context loss: after any gap, read it before you
-say another word, and continue from what it records, not from what you
-remember. A crash mid-session now costs nothing already appended —
-recovery commits a draft that holds evidence.
+you pose it, each coverage line to `## taught` only AFTER the learner
+has seen that material — never at open, never for what you intend
+to present — and each grade to `## grades` the moment the evidence
+lands. The draft is what survives a mid-lesson context loss: after
+any gap, read it before you say another word, and continue from what
+it records, not from what you remember. A crash mid-session now costs
+nothing already appended — recovery commits a draft that holds
+evidence.
 
 **Then the retrieval block.** Quiz exactly the concepts `begin` listed,
 cold. `begin` told you what is already spent: a stored bank item is used

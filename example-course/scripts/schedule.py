@@ -1577,6 +1577,13 @@ def cmd_begin(course: Path):
         untaught = [c for c in u["concepts"]
                     if records[c]["status"] == "untaught"]
         lines.append(f"untaught here: {', '.join(untaught) or '-'}")
+        if untaught:
+            # a tutor whose chat thread persists across days "remembers"
+            # teasers and abandoned openers as teaching (2026-09-03) —
+            # say the truth at the exact moment the confusion forms
+            lines.append("  untaught means untaught — whatever you remember "
+                         "mentioning about these, the learner has not been "
+                         "taught them; teach from the worked example.")
         if u["artifact"] and u["artifact"] != "none":
             lines.append(f"artifact-milestone: {u['artifact']}")
     lines.append(f"quiz these ({len(ids)}): {', '.join(ids) or '-'}")

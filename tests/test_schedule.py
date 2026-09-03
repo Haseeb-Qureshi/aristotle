@@ -1823,6 +1823,24 @@ class TestDraftLog(CourseCase):
         os.utime(p, (old, old))
 
 
+class TestUntaughtMeansUntaught(CourseCase):
+    """A tutor whose chat thread persists across days 'remembers' teasers
+    and abandoned openers as teaching (2026-09-03: 'what stuck from
+    yesterday's five-queue framing?' on a concept never taught). The
+    brief says so at the exact moment the confusion forms."""
+
+    def test_begin_disclaims_memory_for_untaught_concepts(self):
+        out = S.cmd_begin(self.dir)
+        self.assertIn("untaught here: beta", out)
+        self.assertIn("untaught means untaught", out)
+
+    def test_no_disclaimer_when_nothing_is_untaught(self):
+        self.set_record("beta", status="active", next="2026-08-01")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("untaught here: -", out)
+        self.assertNotIn("untaught means untaught", out)
+
+
 class TestUnjustFail(CourseCase):
     """A concept cannot fail before it was taught. The pilot's tutor used
     a bank quiz item as the door into an untaught concept; had it graded
