@@ -185,6 +185,22 @@ Then work, in order:
    fact an answer key demands, decide where it lives — in the stem, in a
    `requires:` clause, or in the concept's teaching notes so that the
    session teaching it presents it.
+
+   **Visual aids — optional, triaged, never load-bearing.** Pick the
+   concepts whose idea is a *shape*: a ladder, a split, a gate, a
+   flow, a before/after. Argument-shaped concepts stay prose. For each
+   pick, follow `tools/visuals/SPEC.md` (takeaway-first brief, phone
+   portrait, labelled axes) and run `tools/visuals/vis.py build` until
+   the blind reader's sentence matches the takeaway. Then add one line
+   to that concept's asset section:
+
+   ```
+   - visual: <id> | presents: <facts the image states> | recall: <question answerable without the image>
+   ```
+
+   The concept's prose must teach completely without its picture —
+   the tutor sends the image as reinforcement, and a lesson must
+   survive a photo that never loads.
 8. **Write the directory** (§6), then run `S check` and fix everything it
    reports. It validates the DAG, cross-file ids, the session arithmetic,
    and asset quality.

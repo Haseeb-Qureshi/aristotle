@@ -857,7 +857,8 @@ def parse_assets(text: str):
             if key == "concept":
                 section, kind = val, "concept"
                 out["concepts"].setdefault(
-                    val, {"quiz": [], "apply": [], "example": {}})
+                    val, {"quiz": [], "apply": [], "example": {},
+                          "visual": []})
             elif key == "rubric":
                 section, kind = val, "rubric"
                 out["rubrics"].setdefault(val, {"claims": [], "avoid": []})
@@ -896,11 +897,16 @@ def parse_assets(text: str):
             elif field == "apply":
                 c["apply"].append(rest)
                 last = (c["apply"], len(c["apply"]) - 1)
+            elif field == "visual":
+                # optional picture: '<id> | presents: … | recall: …'.
+                # check only needs the id; course_warnings verifies the
+                # rendered file, and the tutor reads the rest as prose
+                c["visual"].append(rest.partition(" | ")[0].strip())
             else:
                 # a typo'd field would otherwise vanish without a trace
                 raise FormatError(
                     f"unknown field {field!r} under '## concept: {section}' "
-                    "(quiz, example, apply)")
+                    "(quiz, example, apply, visual)")
         elif kind == "rubric":
             r = out["rubrics"][section]
             if field == "claim":
@@ -1190,6 +1196,15 @@ def course_warnings(course: Path):
             why = ("a stranger agent has no entry point" if f == "README.md"
                    else "graduation has no baseline delta to show")
             out.append(f"no {f} — {why}.")
+
+    # a `- visual:` asset line promises a rendered image; a dangling one
+    # would make the tutor send a broken MEDIA path mid-lesson
+    for path in sorted((course / "assets").glob("unit-*.md")):
+        for m in re.finditer(r"^- visual:\s*([\w.-]+)", _read(path), re.M):
+            vid = m.group(1)
+            if not (course / "visuals" / vid / "teach.png").exists():
+                out.append(f"{path.name} lists visual '{vid}' but "
+                           f"visuals/{vid}/teach.png does not exist.")
     return out
 
 

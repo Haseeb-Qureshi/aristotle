@@ -16,6 +16,7 @@ Model calls happen only in `blind`/`judge` (gpt-6-sol via codex, ~30 output
 tokens) and are skipped when the source hash is unchanged.
 """
 import hashlib, json, re, subprocess, sys, tempfile
+from xml.sax.saxutils import escape
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -23,7 +24,8 @@ HERE = Path(__file__).resolve().parent
 FONTS = HERE / "fonts"
 NS = "{http://www.w3.org/2000/svg}"
 W, H, MARGIN = 1080, 1350, 72
-MIN_FONT, ASOF_FONT, MAX_LABELS, MAX_WORDS = 48, 36, 6, 25
+MIN_FONT, ASOF_FONT, AXIS_FONT, MAX_LABELS, MAX_WORDS = 48, 36, 40, 6, 25
+MAX_AXES = 2
 ACCENT = {"#2563eb", "#dbeafe"}
 ALLOWED = {"#ffffff", "#1f2937", "#9ca3af", "#f3f4f6"} | ACCENT
 BANNED_TAGS = {"linearGradient", "radialGradient", "filter", "pattern",
@@ -98,11 +100,11 @@ def lint(d: Path):
     if root.get("viewBox") != f"0 0 {W} {H}":
         errs.append(f"viewBox must be '0 0 {W} {H}'")
 
-    labels, words, ids = 0, 0, set()
+    labels, words, axes, ids = 0, 0, 0, set()
     blanks = 0
 
     def walk(el, size, in_accent):
-        nonlocal labels, words, blanks
+        nonlocal labels, words, blanks, axes
         tag = el.tag.replace(NS, "")
         if tag in BANNED_TAGS:
             errs.append(f"<{tag}> is not allowed")
@@ -129,10 +131,14 @@ def lint(d: Path):
                 errs.append(f"duplicate text id {tid}")
             ids.add(tid)
             content = "".join(el.itertext()).strip()
-            floor = ASOF_FONT if tid == "asof" else MIN_FONT
+            axis = bool(tid) and tid.startswith("axis")
+            floor = ASOF_FONT if tid == "asof" else AXIS_FONT if axis else MIN_FONT
             if size is None or size < floor:
                 errs.append(f"font-size {size} on '{content}' below {floor}")
-            if tid != "asof":
+            if axis:
+                axes += 1
+                words += len(content.split())
+            elif tid != "asof":
                 labels += 1
                 words += len(content.split())
             if el.get("data-recall") == "blank":
@@ -144,6 +150,8 @@ def lint(d: Path):
     walk(root, None, False)
     if labels > MAX_LABELS:
         errs.append(f"{labels} labels, max {MAX_LABELS}")
+    if axes > MAX_AXES:
+        errs.append(f"{axes} axis labels, max {MAX_AXES}")
     if words > MAX_WORDS:
         errs.append(f"{words} words, max {MAX_WORDS}")
     if brief.get("recall_prompt") and not blanks:
@@ -187,7 +195,8 @@ def chart(d: Path):
 
     {"type": "bars", "items": [{"label": "H100 air", "value": 40,
       "text": "40 kW"}, ...], "accent": 2, "asof": "mid-2026"}
-      horizontal bars, one row per item, label above its bar.
+      horizontal bars, one row per item, label above its bar. Optional
+      "axis": "rack power" draws a labelled value axis under the bars.
     {"type": "stack", "items": [...same...], "accent": 0, "asof": ...}
       one vertical column split into parts, labels to the right.
     The accented item is drawn in the accent color AND its label in
@@ -206,7 +215,7 @@ def chart(d: Path):
         fill = "#2563EB" if bold else "#1F2937"
         return (f'<text id="t{i}{"v" if size != 52 else ""}" x="{x}" y="{y}" '
                 f'font-size="{size}" font-weight="{600 if bold else 400}" '
-                f'fill="{fill}" text-anchor="{anchor}"{recall}>{s}</text>')
+                f'fill="{fill}" text-anchor="{anchor}"{recall}>{escape(s)}</text>')
 
     if spec["type"] == "bars":
         vmax = max(it["value"] for it in items)
@@ -223,6 +232,15 @@ def chart(d: Path):
             grp = [bar, label(i, MARGIN, y + 52, lab)]
             out.append(f'<g id="accent">{"".join(grp)}</g>' if i == acc
                        else "".join(grp))
+        if spec.get("axis"):
+            # value axis under the bars: what bar LENGTH measures
+            ay = y0 + len(items) * row + 10
+            out.append(f'<line x1="{MARGIN}" y1="{ay:.0f}" x2="{W - MARGIN - 4}" '
+                       f'y2="{ay:.0f}" stroke="#1F2937" stroke-width="3"/>'
+                       f'<path d="M{W - MARGIN} {ay:.0f} l-22 -11 v22 z" fill="#1F2937"/>'
+                       f'<text id="axis-x" x="{W - MARGIN}" y="{ay + 56:.0f}" '
+                       f'font-size="44" fill="#9CA3AF" text-anchor="end">'
+                       f'{escape(spec["axis"])}</text>')
     elif spec["type"] == "stack":
         total = sum(it["value"] for it in items)
         x, cw, y = MARGIN, 260, top
@@ -244,7 +262,7 @@ def chart(d: Path):
     if spec.get("asof"):
         out.append(f'<text id="asof" x="{W - MARGIN}" y="{H - MARGIN - 24}" '
                    f'font-size="36" fill="#9CA3AF" text-anchor="end">'
-                   f'as of {spec["asof"]}</text>')
+                   f'as of {escape(spec["asof"])}</text>')
     out.append("</svg>")
     (d / "source.svg").write_text("\n".join(out))
 
@@ -338,6 +356,9 @@ if __name__ == "__main__":
         meta = json.loads((d / "meta.json").read_text())
         takeaway = json.loads((d / "brief.json").read_text())["takeaway"]
         meta["verdict"] = judge(takeaway, meta["reviewer"])
+        # the brief changed; keep the cache key honest so build doesn't re-roll
+        meta["sha"] = hashlib.sha256((d / "source.svg").read_bytes() +
+                                     (d / "brief.json").read_bytes()).hexdigest()[:16]
         (d / "meta.json").write_text(json.dumps(meta, indent=1))
         print(f"{d.name}: {meta['verdict']}")
     elif cmd == "preview":

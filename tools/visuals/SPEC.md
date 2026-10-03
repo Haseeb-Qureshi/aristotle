@@ -2,6 +2,8 @@
 
 You create ONE visual aid for one concept of a phone-delivered course. The learner sees it as a Telegram photo, inside a chat, between the tutor's messages. You produce it as SVG; it is rasterized and linted automatically. The tutor's chat message supplies the context and the question — the image only shows.
 
+**A visual is never load-bearing.** The tutor's prose teaches the idea completely on its own; the picture makes its shape visible faster. The lesson must still work if the photo fails to load or the learner reads in text only. So never put a fact in the image that the asset's prose doesn't teach, and never design an image that a question will depend on.
+
 ## Step 1 — brief.json (write before any drawing)
 
 ```json
@@ -17,6 +19,7 @@ You create ONE visual aid for one concept of a phone-delivered course. The learn
 }
 ```
 
+- The takeaway states the IDEA; specific figures belong in `presents`. A takeaway that hard-codes a number ("$1B") fails a reader who grasped the idea but didn't recite the figure.
 - Pick the idea that is HARDEST to grasp from text alone. If the concept has several, the rest stay in prose.
 - `presents` must contain only facts the unit's asset file already teaches. A visual never introduces new material.
 - Quantitative content (bars, ladders, shares) does NOT go in hand-written SVG — write `chart.json` for `chart.py` instead (see its docstring). Hand-drawn SVG is for structure: gates, flows, domains, splits.
@@ -29,9 +32,13 @@ Canvas and type
 - Minimum font size 48. Labels 48–60; the single emphasized label up to 80. The as-of stamp (if any) is the only exception: `id="asof"`, 36px, muted.
 - No title. No sentences: labels of 1–4 words.
 
+Axes (linted as their own allowance)
+- If position or direction carries meaning — time, sequence, order, size — draw that axis as a line with an arrowhead and LABEL it (1–3 words, e.g. "time →", "GPU age →", "decode steps"). An unlabelled direction makes the reader guess what the layout means; that guess is what the blind test punishes.
+- Axis labels get `id="axis-…"`, sit at the axis end, 40–48px, ink or muted. At most 2. They do not count toward the 6-label limit, but they do count toward the word limit.
+
 Restraint (linted)
 - At most 6 text labels (the as-of stamp excluded), at most 25 words total.
-- At most 7 visual elements. No icons unless the icon IS the concept, no shadows, gradients, patterns, or frame around the image.
+- At most 7 visual elements, not counting text or axes. A repeated mark drawn as one compound `<path>` (eight token cells, a row of GPUs) is one element. No icons unless the icon IS the concept, no shadows, gradients, patterns, or frame around the image.
 - At least 40% of the canvas stays empty.
 
 Color (linted — any other color fails)
@@ -46,7 +53,8 @@ Composition
 
 Machine-readable markup (linted)
 - Every `<text>` has a unique `id`.
-- Mark the takeaway label(s) to blank in the recall variant with `data-recall="blank"` (if `recall_prompt` is not null). The renderer replaces their text with "?".
+- Mark the label(s) to blank in the recall variant with `data-recall="blank"` (if `recall_prompt` is not null). The renderer replaces their text with "?". Blank whatever makes the best retrieval — usually the takeaway label, but never one so obvious the question answers itself.
+- `recall_prompt` must be answerable from memory WITHOUT the picture: the image is a cue, not the question's only source. Avoid duplicating a stored quiz item of the same concept.
 
 ## Step 3 — self-check (answer, then revise if any answer is no)
 1. Covering the labels, does the shape alone suggest the relationship?

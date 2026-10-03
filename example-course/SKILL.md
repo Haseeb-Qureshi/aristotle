@@ -167,6 +167,8 @@ inference the question actually demanded.
 > missed, name the misconception they hit **in plain words**. Never say
 > "M1" out loud.
 
+**Feedback goes in the last message of the turn.** Many chat surfaces deliver only a turn's final message; text you write before a tool call can silently never reach the learner. So order each turn as: log writes first (`## grades`, `## asked`), then ONE closing message holding the verdict, the correction, and the next question together. Never write the critique, then log, then send the next question; the learner sees only the question and concludes you skipped their answer.
+
 Re-probe a miss later if it helps them, but the `fail` stands — one
 verdict per concept per session, and the next spaced appearance is the
 real evidence.
@@ -191,6 +193,21 @@ first. **One new concept per session, always** — this is the rule most
 worth holding when you feel behind. Then one problem from the unit's
 `## interleaved` set: they must say *which* concept applies before
 solving. Grade the new concept `taught`.
+
+**Pictures are optional aids.** If the concept you're teaching has a
+`- visual:` line in its asset section, send its image once, after your
+prose has taught the idea: put `MEDIA:$C/visuals/<id>/teach.png`
+(absolute path) on its own line. Your words must teach it completely
+without the picture, because a photo can fail to load or be skipped.
+Add the line's `presents:` facts to that concept's coverage line.
+Never send it twice, and never ask anything only the picture can answer.
+Concepts taught before their picture existed get it at the next natural
+moment instead: as part of correcting a missed retrieval, or in a repair
+session — after the miss is graded, never while a question about that
+concept is still open (the picture shows answers). In a retrieval block
+you MAY send `recall.png` with the line's `recall:` question instead of a
+fresh case, once per concept per course; its answer must come from
+memory, not from reading the image.
 
 **teach-back** — the unit's keystones only. You play a smart, confused
 student; they teach. Probe with the rubric's `avoid:` misconceptions.

@@ -1886,6 +1886,46 @@ class TestAgentFacingErrors(CourseCase):
         self.assertNotIn("Traceback", r.stderr)
 
 
+class TestVisualWarnings(CourseCase):
+    """A `- visual:` line in an asset file is a promise that a rendered
+    image exists; a dangling one would have the tutor send a broken
+    MEDIA path mid-lesson. Advisory, like every course_warnings rule."""
+
+    def add_visual_line(self):
+        p = self.dir / "assets" / "unit-01.md"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "## concept: alpha",
+            "## concept: alpha\n- visual: u01-alpha-shape | presents: a",
+            1), encoding="utf-8")
+
+    def test_dangling_visual_is_flagged(self):
+        self.add_visual_line()
+        w = " | ".join(S.course_warnings(self.dir))
+        self.assertIn("u01-alpha-shape", w)
+
+    def test_visual_line_parses_through_check(self):
+        """The asset parser whitelists fields and hard-errors on unknown
+        ones — a course that adds a visual line must still pass check
+        (and so still run begin)."""
+        self.add_visual_line()
+        d = self.dir / "visuals" / "u01-alpha-shape"
+        d.mkdir(parents=True)
+        (d / "teach.png").write_bytes(b"png")
+        S.cmd_check(self.dir)  # must not raise
+        assets = S.parse_assets((self.dir / "assets" / "unit-01.md")
+                                .read_text(encoding="utf-8"))
+        self.assertEqual(assets["concepts"]["alpha"]["visual"],
+                         ["u01-alpha-shape"])
+
+    def test_rendered_visual_is_silent(self):
+        self.add_visual_line()
+        d = self.dir / "visuals" / "u01-alpha-shape"
+        d.mkdir(parents=True)
+        (d / "teach.png").write_bytes(b"png")
+        w = " | ".join(S.course_warnings(self.dir))
+        self.assertNotIn("u01-alpha-shape", w)
+
+
 class TestCourseWarnings(CourseCase):
     """Design rules that `check` advises on but must never fail for —
     every one of these was found broken in a real course before it was

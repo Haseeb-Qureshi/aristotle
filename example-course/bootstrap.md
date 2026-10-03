@@ -93,6 +93,20 @@ longest silence in the whole product and they are holding a phone:
 
 Then work, in order:
 
+0. **Write the brief down before you build anything.** Create the
+   course directory and put `brief.md` in it first: topic, terminal
+   task, session count, cadence, research ruling, chosen path, and the
+   absolute course path. Six lines, thirty seconds.
+
+   This is the cheapest insurance in the whole procedure. The design
+   studio is the longest single stretch of work you will do, and if
+   your context is compacted or the run is interrupted partway, every
+   answer the user gave you is gone — a clean-room agent that lost it
+   mid-bootstrap had to guess the topic back from directory mtimes and
+   then contradicted itself on the session count. Anything a later you
+   would have to re-ask the user for belongs on disk before the long
+   work starts, not after it.
+
 1. **Research sweep** if ruled. Distill into `sources/`.
 2. **Over-generate** a candidate concept inventory — everything a course
    on this could contain.
@@ -106,6 +120,14 @@ Then work, in order:
 4. **Tag 5–8 threshold concepts** — the transformative reframings. They
    get generous time and multiple angles. `reprune` will refuse to drop
    them later, so tag deliberately.
+
+   **A minority, always.** Roughly a quarter of the course, never more
+   than a third; the same restraint applies to `keystones:` in
+   `plan.md` (one or two per unit — a keystone is what the unit's
+   teach-back is *about*). A clean-room run tagged every concept as
+   both, which is the same as tagging none: if everything is
+   transformative, nothing gets the extra time, and every unit's
+   teach-back tries to cover the whole unit in twelve minutes.
 5. **Sequence** within the dependency graph's slack. The graph says
    what's *valid*; craft picks which valid order:
    - the thing they came for goes early — motivation beats logical
@@ -142,23 +164,81 @@ Then work, in order:
    running that day.)
    Give every keystone at least one `misconceptions:` entry in the map —
    a keystone with none has nothing for its rubric to warn against.
+
+   **Concept-probes vs case-probes.** A key graded on reasoning is
+   freely reusable — any tutor can ask it of anyone who met the
+   concept. A key that demands specific case evidence (a company, a
+   number, an event) is fair only if the stem supplies that evidence or
+   the teaching session actually presented it, and from here you cannot
+   know which cases a twelve-minute session will fit in. **Prefer stems
+   that carry their own case.** Where a key still demands outside
+   facts, name them:
+
+   ```
+   - quiz: <stem> | a: <key> | distractor: M1 | requires: <case facts the key demands that the stem does not supply>
+   ```
+
+   The runtime tutor spends the item as written only if every
+   `requires:` fact is in the session's presented record; otherwise it
+   weaves those facts into the stem and grades the inference that
+   remains. So run the file once more as a checklist: for **every** case
+   fact an answer key demands, decide where it lives — in the stem, in a
+   `requires:` clause, or in the concept's teaching notes so that the
+   session teaching it presents it.
+
+   **Visual aids — optional, triaged, never load-bearing.** Pick the
+   concepts whose idea is a *shape*: a ladder, a split, a gate, a
+   flow, a before/after. Argument-shaped concepts stay prose. For each
+   pick, follow `tools/visuals/SPEC.md` (takeaway-first brief, phone
+   portrait, labelled axes) and run `tools/visuals/vis.py build` until
+   the blind reader's sentence matches the takeaway. Then add one line
+   to that concept's asset section:
+
+   ```
+   - visual: <id> | presents: <facts the image states> | recall: <question answerable without the image>
+   ```
+
+   The concept's prose must teach completely without its picture —
+   the tutor sends the image as reinforcement, and a lesson must
+   survive a photo that never loads.
 8. **Write the directory** (§6), then run `S check` and fix everything it
    reports. It validates the DAG, cross-file ids, the session arithmetic,
    and asset quality.
 
 ## Step 6 — Write the course directory
 
+**Where it goes.** If the user named a location, use exactly that one.
+Otherwise put it beside their other projects — `~/projects/<slug>/`,
+slug from the topic — and **say the absolute path in your reply**. The
+path is not an implementation detail: the scheduler, the nudge job, and
+every future session have to find this directory, and a course written
+somewhere nobody records is a course that runs once.
+
 A course directory must be self-sufficient — that is the resurrection
-test. Copy in `scripts/schedule.py`, **`SKILL.md`, `checkpoint.md`, and
-`templates/`**, and write a `.gitignore`:
+test. Copy in `scripts/schedule.py`, **`SKILL.md`, `checkpoint.md`,
+`templates/`, and `references/`** (SKILL.md points into `references/`;
+a course without it has a dangling instruction), and write a
+`.gitignore`:
 
 ```
 course/
   README.md  domain-map.md  plan.md  knowledge-state.md
   history.md  review-queue.md  .gitignore
   log/  assets/  sources/  artifact/
-  scripts/  templates/  SKILL.md  checkpoint.md
+  scripts/  templates/  references/  SKILL.md  checkpoint.md
 ```
+
+Copy `tools/` too if the course was research-ruled and may refresh
+sources later. Do **not** copy `bootstrap.md` or `scheduling.md` into
+the course — bootstrap has already run, and scheduling is the
+operator's concern, not the session's.
+
+The fastest way to get this right is `cp` from the skill install you
+are reading, not retyping files. Never copy `example-course/`'s state
+files as a starting point: its `plan.md`, `knowledge-state.md`, and
+`log/` describe a different, half-finished course, and a stray espresso
+log in a sourdough course is an integrity error at best and a phantom
+session at worst.
 
 `.gitignore` must contain `.session-inprogress`, `*.tmp`, `__pycache__/`.
 
@@ -213,7 +293,14 @@ there's a session 2.
    S seed <concept-id> <none|exposed|retrievable>
    ```
    `retrievable` schedules a real interval, so a concept they already
-   know won't come back tomorrow.
+   know won't come back tomorrow. **Seeds activate only in units the
+   course has reached**: on a concept whose unit is still untouched the
+   band is recorded as a note and nothing else — the engine enforces
+   this, and that note is what lets the unit's own session teach it
+   fast. A placement answer is calibration evidence, not
+   spaced-retrieval evidence; activating a far-future concept puts it in
+   every queue months early, with no presented facts to probe and no
+   spendable bank but its far-future unit's.
 4. **Write the baseline.** Append to `history.md` under `## baseline`:
    one probe question and their answer, both verbatim. Graduation shows
    them this delta; it is the payoff for the whole course, and nothing

@@ -31,6 +31,11 @@
      puts unmet facts into the question instead of the answer key.
      Prefer stems that carry their own case — see bootstrap.md,
      concept-probes vs case-probes.
+
+     `- visual:` lines are OPTIONAL — only where structure or quantity
+     is hard to carry in prose. Build the image first with
+     tools/visuals (it must pass vis.py build); `check` warns on a
+     visual line with no rendered image.
 -->
 <!-- aristotle:assets unit: NN -->
 
@@ -39,6 +44,7 @@
 - quiz: <a case-judgment item if this concept's terminal use is judgment rather than recall> | a: <key> | distractor: M2 | requires: <case facts the key demands beyond the stem>
 - example: worked | <fully worked example, shown at first teaching>
 - apply: <application prompt; required for verify:use concepts>
+- visual: <id> | presents: <facts the image states> | recall: <question for recall.png, answerable without it>
 
 ## rubric: keystone-id
 <!-- Teach-back grading is comparison against THIS, never holistic
