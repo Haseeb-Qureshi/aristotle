@@ -57,6 +57,15 @@ files at bootstrap and own them afterwards.
   nudges, heals, and resumes without supervision — see
   [`scheduling.md`](scheduling.md). A dropped notification costs one
   nudge, never state.
+- **Pictures where a picture earns it — never required.** Concepts whose
+  idea is a shape (a ladder, a split, a gate, a flow) can carry a
+  pre-rendered phone-sized image, authored once at bootstrap with
+  [`tools/visuals`](tools/visuals): a takeaway-first brief, labelled
+  axes, a zero-token lint, and a blind test where a model that never saw
+  the brief must say what the picture teaches. The tutor sends it once,
+  after its prose has taught the idea completely, and logs the facts it
+  shows; a free "?" variant doubles as a recall cue. A lesson always
+  works with the image missing.
 - **The resurrection test.** A fresh agent handed only the course
   directory must run the next session correctly with zero explanation.
   That one property is disaster recovery, platform portability, and
@@ -73,13 +82,14 @@ files at bootstrap and own them afterwards.
 | [`scripts/schedule.py`](scripts/schedule.py) | The deterministic core (stdlib only) |
 | [`templates/`](templates) | Every state file, self-documenting |
 | [`tools/venice.py`](tools/venice.py) | Optional research helper: text + real YouTube ingestion |
+| [`tools/visuals/`](tools/visuals) | Visual-aid pipeline: [`SPEC.md`](tools/visuals/SPEC.md) (authoring rules) and `vis.py` (render, lint, chart, blind review) |
 | [`example-course/`](example-course) | A complete 12-session course, mid-flight |
 | [`tests/test_schedule.py`](tests/test_schedule.py) | Written first; pins every interface |
 | [`CRITIQUE.md`](CRITIQUE.md) · [`CRITIQUE-R2.md`](CRITIQUE-R2.md) · [`CRITIQUE-R3.md`](CRITIQUE-R3.md) | Three adversarial panels, in full |
 | [`SPEC.md`](SPEC.md) | **Superseded** — the v2.1 design spec, kept for history |
 
 ```
-python3 -m unittest discover -s tests          # 161 tests
+python3 -m unittest discover -s tests          # 210 tests
 python3 scripts/schedule.py --course example-course check
 ```
 
