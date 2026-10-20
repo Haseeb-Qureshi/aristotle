@@ -32,7 +32,7 @@ Record their verdict as part of the next close:
 | Verdict | Action |
 |---|---|
 | count it | `- grade: <id> \| result: pass \| note: user-adjudicated` |
-| keep trying | `- grade: <id> \| result: taught \| note: re-entering rotation` |
+| keep trying | re-teach it briefly in this session, log a `## taught` coverage line for it, then `- grade: <id> \| result: taught \| note: re-entering rotation` (close refuses `taught` without the coverage line) |
 | drop it | `S set-verify <id> none` |
 
 All three now take effect: `pass` and `taught` clear the stuck status and
@@ -61,7 +61,8 @@ S reprune <comma,separated,ids>
 
 The script refuses to drop a threshold concept or a prerequisite of
 something kept, excludes the rest from the queue, and rewrites `plan.md`.
-Then set `next-session: <n>/<new total>` and remove emptied units.
+Then set the new length with `S resize <new total>` (it refuses a size
+the plan cannot fit) and remove emptied units.
 
 ## Dormant (`type: dormant` — about a fortnight of silence)
 

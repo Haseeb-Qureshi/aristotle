@@ -2089,7 +2089,7 @@ class TestVariedReview(CourseCase):
         self.set_record("alpha", status="active", interval=1,
                         last="2026-07-20", next="2026-07-21")
         self.set_record("beta", status="active", interval=7,
-                        last="2026-06-14", next="2026-06-21")  # 30d late
+                        last="2026-07-04", next="2026-07-11")  # 10d late
         self.set_record("gamma", status="active", interval=16,
                         last="2026-06-30", next="2026-07-16")  # 5d late
         self.set_record("delta", status="active", interval=1,
@@ -2459,6 +2459,134 @@ class TestThirdReview(CourseCase):
         self.assertIn("open-question: why?", out)
 
 
+class TestFourthReview(CourseCase):
+    """Findings of the gpt-6-astra review (2026-10-20), pinned."""
+
+    def stale(self, token):
+        p = self.dir / S.SENTINEL
+        p.write_text(f"session: {token}\n", encoding="utf-8")
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+
+    def at(self, n):
+        S.write_plan_header(self.dir, {"next-session": f"{n}/10"})
+
+    def hdr(self):
+        return S.parse_plan(self.dir)[0]
+
+    # recovery keeps the ledger: a posed question survives a reset
+    def test_reset_keeps_a_draft_that_posed_questions(self):
+        self.git_init()
+        d = self.dir / "log" / f"{TODAY}-2.md"
+        d.write_text("session: 2\n\n## asked\n- alpha.q1\n",
+                     encoding="utf-8")
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "reset")
+        self.assertTrue(d.exists())
+
+    # a close interrupted after its grades landed is finished, exactly once
+    def test_an_interrupted_close_is_finished_by_recovery(self):
+        self.git_init()
+        (self.dir / "owed.md").write_text("- [ ] alpha | the case\n",
+                                          encoding="utf-8")
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-2.md"
+        draft.write_text(draft.read_text(encoding="utf-8").replace(
+            "## taught\n", "## taught\n- alpha: owed: the case\n").replace(
+            "## grades\n", "## grades\n- grade: alpha | result: pass | "
+            "note: x\n"), encoding="utf-8")
+        # crash: the journal is written and grades applied, nothing else
+        (self.dir / S.CLOSE_JOURNAL).write_text(
+            f"session: 2\nlog: log/{draft.name}\n", encoding="utf-8")
+        S.cmd_commit_grades(self.dir, draft)
+        self.stale("2")
+        S.cmd_recover(self.dir)
+        self.assertEqual(self.hdr()["next-session"], "3/10")
+        self.assertIn("- [x] alpha", (self.dir / "owed.md").read_text())
+        self.assertFalse((self.dir / S.CLOSE_JOURNAL).exists())
+        self.assertFalse((self.dir / S.SENTINEL).exists())
+
+    # evidence is dated by the lesson, not the recovery
+    def test_replayed_grades_carry_the_lesson_date(self):
+        self.git_init()
+        self.write_log("2026-07-19-2.md",
+                       log_text("2", ("alpha", "pass", "x")))
+        self.stale("2")
+        S.cmd_recover(self.dir)
+        self.assertEqual(self.rec("alpha")["last"], "2026-07-19")
+
+    # the teach-back brief carries its rubric and its coverage
+    def test_teach_back_brief_reads_the_rubric_and_shows_coverage(self):
+        self.set_record("beta", status="active", next="2026-08-30")
+        self.write_log("2026-07-18-1.md", "session: 1\n\n## taught\n"
+                       "- alpha: the first thing shown\n")
+        self.at(4)
+        out = S.cmd_begin(self.dir)
+        self.assertRegex(out, r"read: assets/unit-01\.md lines \d+-\d+ "
+                              r"\(rubric alpha\)")
+        self.assertIn("alpha [1]: the first thing shown", out)
+
+    def test_standard_brief_points_at_the_interleaved_set(self):
+        out = S.cmd_begin(self.dir)
+        self.assertRegex(out, r"read: assets/unit-01\.md lines \d+-\d+ "
+                              r"\(interleaved\)")
+
+    # the brief survives a context loss
+    def test_resume_reprints_the_live_brief(self):
+        self.git_init()
+        out = S.cmd_begin(self.dir)
+        self.assertEqual(S.cmd_resume(self.dir), out)
+        p = self.write_log(f"{TODAY}-2.md",
+                           log_text("2", ("beta", "taught", "x")))
+        S.cmd_close(self.dir, p)
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_resume(self.dir)
+
+    # the cron sees what dispatch sees
+    def test_pointer_reports_the_effective_session_type(self):
+        S.write_plan_header(self.dir, {"last-attended": "2026-06-01"})
+        self.assertIn("type: dormant", S.cmd_pointer(self.dir))
+
+    # neglect is bounded
+    def test_a_neglected_item_takes_the_first_review_slot(self):
+        self.set_record("alpha", status="active", interval=1,
+                        last="2026-07-20", next="2026-07-21")
+        self.set_record("beta", status="active", interval=7,
+                        last="2026-06-01", next="2026-06-08")
+        self.assertEqual(S.build_queue(self.dir, cap=1, lead="fresh"),
+                         ["beta"])
+
+    def test_no_none_session_while_something_is_neglected(self):
+        self.set_record("beta", status="active", interval=7,
+                        last="2026-06-01", next="2026-06-08")
+        os.environ.pop("ARISTOTLE_REVIEW_PLAN", None)
+        shapes = {S.review_plan(self.dir, str(n), None, due=1,
+                                neglected=True) for n in range(300)}
+        self.assertNotIn(("none", 0), shapes)
+
+    # graduation names unpaid owed material too
+    def test_graduation_lists_unpaid_owed_material(self):
+        self.git_init()
+        (self.dir / "owed.md").write_text("- [ ] alpha | the deep case\n",
+                                          encoding="utf-8")
+        self.at(11)
+        self.assertIn("the deep case", S.cmd_begin(self.dir))
+
+    # state validation is real
+    def test_impossible_dates_fail_validation(self):
+        self.set_record("alpha", last="2026-99-99")
+        with self.assertRaises(S.FormatError):
+            S.load_state(self.dir)
+
+    # resizing is a verb, not a hand-edit
+    def test_resize_sets_the_total_and_refuses_impossible_sizes(self):
+        self.git_init()
+        S.cmd_resize(self.dir, 12)
+        self.assertEqual(self.hdr()["next-session"], "2/12")
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_resize(self.dir, 3)
+
+
 class TestUnjustFail(CourseCase):
     """A concept cannot fail before it was taught. The pilot's tutor used
     a bank quiz item as the door into an untaught concept; had it graded
@@ -2581,7 +2709,13 @@ class TestCourseWarnings(CourseCase):
         self.add_u2_assets()
         (self.dir / "README.md").write_text("x", encoding="utf-8")
         (self.dir / "history.md").write_text("x", encoding="utf-8")
+        (self.dir / "templates").mkdir(exist_ok=True)
+        (self.dir / "templates" / "log.md").write_text("x", encoding="utf-8")
         self.assertEqual(S.course_warnings(self.dir), [])
+
+    def test_missing_log_template_is_flagged(self):
+        self.assertIn("templates/log.md", " | ".join(
+            S.course_warnings(self.dir)))
 
     def test_ignored_plan_section_claiming_sessions_is_flagged(self):
         """A clean-room bootstrap wrote '## Terminal synthesis' with a

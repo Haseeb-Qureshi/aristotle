@@ -55,7 +55,7 @@ if [ "$mode" = "course" ]; then
       else echo "DRIFTED  ${c/#$HOME/\~}/$f"; bad=1; fi
     done
     for d in templates references; do
-      [ -d "$c/$d" ] || continue
+      if [ ! -d "$c/$d" ]; then echo "MISSING  ${c/#$HOME/\~}/$d/"; bad=1; continue; fi
       if diff -rq "$SRC/$d" "$c/$d" >/dev/null 2>&1; then
         echo "current  ${c/#$HOME/\~}/$d/"
       else echo "DRIFTED  ${c/#$HOME/\~}/$d/"; bad=1; fi

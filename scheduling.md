@@ -110,9 +110,12 @@ So the search is deterministic, not a guess about topic words:
    line for each concept the transcript shows was presented (`close`
    requires one per `taught` grade), with anything the transcript does
    not clearly show under `without:`.
-3. **Grade `taught` only — never `pass`, `fail`, or `rubric-*`.** You
-   did not witness the retrieval, so you may not award evidence. Note
-   "reconstructed" in each grade line.
+3. **Grade `taught` only, and only for the concept the draft's
+   `<!-- brief: ... teach=<id> -->` line names** — never `pass`, `fail`
+   or `rubric-*`, and never `taught` on any other concept (it would reset
+   that concept's schedule). You did not witness the retrieval, so you
+   may not award evidence. A teach-back (`back=` in the brief) gets no
+   grade at all: it stays owed. Note "reconstructed" in each grade line.
 4. Run `schedule.py close` on it.
 
 Then continue to `recover` as normal. If no lesson is found, do nothing
@@ -140,7 +143,7 @@ working directory** on every run:
 ```
 # <course name> — next-session pointer
 session: 7/30
-open-question: <one line from the newest log>
+open-question: <the open-question line `schedule.py pointer` prints>
 course: /abs/path/to/course
 to-start: read SKILL.md in the course dir, then run:
   python3 scripts/schedule.py --course /abs/path/to/course begin
@@ -207,19 +210,24 @@ is in this prompt — do not explore. Course dir: $C (it exists).
 1. mkdir -p $C/log
 2. If $C/.session-inprogress exists and is younger than 2 hours: respond
    [silent] and stop.
-   If it is older than 2 hours and no $C/log file matches its token:
-   search conversation history for the last "Session N —" with no
-   "Next time:" after it; if one is found, write
-   $C/log/<date>-<token>.md (format: $C/templates/log.md, `taught`
-   grades only, note "reconstructed"), then run
+   If it is older than 2 hours and its token's log is missing or has no
+   grade lines (begin writes an empty draft at the start): search
+   conversation history for the last "Session N" marker with no
+   "Next time:" after it; if one is found, complete that draft (format:
+   $C/templates/log.md; `taught` only for the brief's teach= concept,
+   note "reconstructed"), then run
    python3 $C/scripts/schedule.py --course $C close $C/log/<file>
 3. python3 $C/scripts/schedule.py --course $C recover
    (if it prints "locked": respond [silent] and stop)
-4. Read $C/plan.md and, if log/ is non-empty, the newest log's
-   "## open question". Nothing else.
+4. Run python3 $C/scripts/schedule.py --course $C pointer — it prints
+   session N/M, course-status, the effective session type and the open
+   question. Read nothing else.
 5. Overwrite <assistant working dir>/<course>-next.md with the pointer
    block from "Orientation" above.
-6. If course-status is not active: follow $C/checkpoint.md dormancy.
+6. By the pointer's `type:` — `dormant` or status `paused`: follow
+   $C/checkpoint.md dormancy (one gentle message a fortnight at most);
+   `graduation`: one message offering the capstone; status `closed`:
+   respond [silent]; `maintenance`: nudge a review at its cadence.
 7. Otherwise your reply IS the nudge: 1-2 sentences, session number +
    open question as a hook. No paths, no ids, no script output.
 ```
