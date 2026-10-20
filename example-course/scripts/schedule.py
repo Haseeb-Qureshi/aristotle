@@ -1775,7 +1775,7 @@ def cmd_begin(course: Path):
 
     plan = None
     lead = "fresh"
-    if d["type"] in ("standard", "catch-up"):
+    if d["type"] in ("standard", "catch-up", "teach-back"):
         plan = review_plan(course, token, _previous_review(course))
         d["cap"] = plan[1]
         lead = "backlog" if _draw(course, token, "lead") < 0.5 else "fresh"
@@ -1812,10 +1812,12 @@ def cmd_begin(course: Path):
             target = d["concept"]
         elif d["type"] == "standard" and untaught:
             target = untaught[0]
-        if d.get("owed") == "teach-back":
-            lines.append(f"teach-back: {d['concept']} — grade against its "
+        backs = ([d["concept"]] if d.get("owed") == "teach-back"
+                 else u["keystones"] if d["type"] == "teach-back" else [])
+        for k in backs:
+            lines.append(f"teach-back: {k} — grade against its "
                          f"## rubric block in assets/unit-{u['num']:02d}.md")
-        elif target:
+        if target and not backs:
             dfn = parse_map(course).get(target, {}).get("def", "")
             lines.append(f"teach: {target}" + (f" — {dfn}" if dfn else ""))
         if u["artifact"] and u["artifact"] != "none":
