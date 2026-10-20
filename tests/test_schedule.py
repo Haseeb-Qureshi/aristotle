@@ -1246,11 +1246,16 @@ class TestRecover(CourseCase):
         self.assertEqual(self.rec("alpha")["interval"], iv)
 
     def test_stale_with_no_log_resets(self):
+        """Reset discards session debris (untracked logs, engine-owned
+        state), never other work in the course."""
         self.git_init()
-        (self.dir / "scratch.md").write_text("debris", encoding="utf-8")
+        (self.dir / "log" / "scratch.md").write_text("debris",
+                                                     encoding="utf-8")
+        (self.dir / "notes.md").write_text("mine", encoding="utf-8")
         self.stale("2")
         self.assertEqual(S.cmd_recover(self.dir), "reset")
-        self.assertFalse((self.dir / "scratch.md").exists())
+        self.assertFalse((self.dir / "log" / "scratch.md").exists())
+        self.assertTrue((self.dir / "notes.md").exists())
 
     def test_recovery_stubs_a_missing_taught_line_rather_than_reset(self):
         """A live tutor gets the hard error and fixes its own log;
@@ -2037,6 +2042,7 @@ class TestVariedReview(CourseCase):
 
     def test_a_teach_back_brief_names_its_keystone_and_draws_a_shape(self):
         self.settle()
+        self.set_record("beta", status="active", next="2026-07-01")
         os.environ["ARISTOTLE_REVIEW_PLAN"] = "exit:1"
         S.write_plan_header(self.dir, {"next-session": "3/10"})
         out = S.cmd_begin(self.dir)
@@ -2134,7 +2140,7 @@ class TestOwedMaterial(CourseCase):
         draft = self.dir / "log" / f"{TODAY}-2.md"
         text = draft.read_text(encoding="utf-8")
         text = text.replace("## taught\n",
-                            "## taught\n- alpha: the second-order case\n")
+                            "## taught\n- alpha: owed: the second-order case\n")
         text = text.replace("## grades\n",
                             "## grades\n- grade: alpha | result: pass | note: x\n")
         draft.write_text(text, encoding="utf-8")
@@ -2156,6 +2162,163 @@ class TestOwedMaterial(CourseCase):
                       (self.dir / "owed.md").read_text())
         with self.assertRaises(S.IntegrityError):
             S.cmd_owe(self.dir, "nope", "x")
+
+
+class TestSecondReview(CourseCase):
+    """Findings of the 2026-10-20 whole-system review, pinned."""
+
+    def stale(self, token):
+        p = self.dir / S.SENTINEL
+        p.write_text(f"session: {token}\n", encoding="utf-8")
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+
+    def at(self, n):
+        S.write_plan_header(self.dir, {"next-session": f"{n}/10"})
+
+    # 1. review density follows the backlog
+    def test_a_big_backlog_draws_heavier_but_still_varied(self):
+        os.environ.pop("ARISTOTLE_REVIEW_PLAN", None)
+        heavy = [S.review_plan(self.dir, str(n), None, due=12)
+                 for n in range(400)]
+        mean = sum(n for _, n in heavy) / len(heavy)
+        self.assertTrue(1.6 < mean < 1.9, mean)
+        self.assertIn(("none", 0), heavy)      # variety survives
+        light = [S.review_plan(self.dir, str(n), None, due=1)
+                 for n in range(400)]
+        self.assertLess(sum(n for _, n in light) / 400, mean)
+
+    # 2. a graded draft orphaned by the went-quiet path is not lost
+    def test_begin_banks_an_unclosed_graded_draft_with_no_lock(self):
+        self.git_init()
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-2.md"
+        draft.write_text(draft.read_text(encoding="utf-8").replace(
+            "## grades\n", "## grades\n- grade: alpha | result: pass | "
+            "note: landed\n"), encoding="utf-8")
+        (self.dir / S.SENTINEL).unlink()       # "went quiet" path
+        out = S.cmd_begin(self.dir)
+        self.assertEqual(self.rec("alpha")["interval"], 3)
+        self.assertIn("session: 2b of", out)
+
+    # 3. teach-back debt: dropped keystones, and the wrong grade warns
+    def test_a_dropped_keystone_owes_no_teach_back(self):
+        self.set_record("beta", status="active", next="2026-08-30")
+        self.set_record("alpha", status="dropped")
+        self.at(4)
+        self.assertNotIn("catch-up", S.cmd_begin(self.dir))
+
+    def test_a_briefed_teach_back_without_a_rubric_grade_warns(self):
+        self.git_init()
+        self.set_record("beta", status="active", next="2026-08-30")
+        self.at(4)
+        S.cmd_begin(self.dir)
+        p = self.dir / "log" / f"{TODAY}-4r.md"   # keep begin's brief
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "## grades\n", "## grades\n- grade: alpha | result: pass | "
+            "note: not a rubric\n"), encoding="utf-8")
+        out = S.cmd_close(self.dir, p)
+        self.assertIn("teach-back", out.split("warn:", 1)[-1])
+
+    # 4. "asked recently" spans sessions, not files
+    def test_recent_asks_span_three_sessions_not_three_files(self):
+        for name, tok, item in [("2026-07-15-1", "1", "case one"),
+                                ("2026-07-16-2", "2", "case two"),
+                                ("2026-07-17-3", "3", "case three a"),
+                                ("2026-07-18-3b", "3b", "case three b"),
+                                ("2026-07-19-3b2", "3b2", "case three c")]:
+            self.write_log(f"{name}.md", f"session: {tok}\n\n## asked\n"
+                           f"- {item}\n")
+        recent, _ = S._asked_history(self.dir)
+        items = [i for _, i in recent]
+        self.assertIn("case one", items)
+
+    # 5. only an explicitly marked line repays an owed item
+    def test_a_plain_coverage_line_does_not_tick_owed(self):
+        self.git_init()
+        (self.dir / "owed.md").write_text("- [ ] alpha | the case\n",
+                                          encoding="utf-8")
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-2.md"
+        text = draft.read_text(encoding="utf-8").replace(
+            "## taught\n", "## taught\n- alpha: some other correction\n"
+        ).replace("## grades\n",
+                  "## grades\n- grade: alpha | result: pass | note: x\n")
+        draft.write_text(text, encoding="utf-8")
+        S.cmd_close(self.dir, draft)
+        self.assertIn("- [ ] alpha", (self.dir / "owed.md").read_text())
+
+    # 6. a requires: clause must not hide an invalid distractor
+    def test_requires_is_parsed_off_the_distractor(self):
+        a = S.parse_assets("## concept: alpha\n- quiz: q | a: k | "
+                           "distractor: M1 | requires: the case\n")
+        self.assertEqual(a["concepts"]["alpha"]["quiz"][0]["distractor"],
+                         "M1")
+
+    # 7. replaying a catch-up says so
+    def test_replayed_catch_up_note_does_not_promise_a_rerun(self):
+        self.git_init()
+        self.set_record("beta", status="active", next="2026-08-30")
+        self.at(4)
+        S.cmd_begin(self.dir)
+        self.write_log(f"{TODAY}-4r.md",
+                       log_text("4r", ("beta", "pass", "x")))
+        self.stale("4r")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("catch-up", out.split("NOTE:", 1)[-1])
+
+    # 8. a review session does not reset the never-none-twice guard
+    def test_previous_review_skips_non_teaching_briefs(self):
+        for name, rev in [("2026-07-18-1.md", "none"),
+                          ("2026-07-19-1b.md", "-")]:
+            self.write_log(name, f"session: 1\n<!-- brief: review={rev} "
+                           "quiz=- teach=- owed=- -->\n")
+        self.assertEqual(S._previous_review(self.dir), "none")
+
+    # 9. reset recovery discards session debris only
+    def test_reset_keeps_work_outside_the_session(self):
+        self.git_init()
+        S._commit(self.dir, "base")
+        new = self.dir / "assets" / "unit-03.md"
+        new.write_text("draft unit\n", encoding="utf-8")
+        a1 = self.dir / "assets" / "unit-01.md"
+        a1.write_text(a1.read_text(encoding="utf-8") + "\n<!-- edit -->\n",
+                      encoding="utf-8")
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "reset")
+        self.assertTrue(new.exists())
+        self.assertIn("<!-- edit -->", a1.read_text(encoding="utf-8"))
+
+    # 10. the final session is never pre-empted by catch-up
+    def test_owed_items_never_preempt_the_final_session(self):
+        self.at(10)
+        self.assertNotEqual(S.dispatch(self.dir)["type"], "catch-up")
+
+    # 11. the presented block shows recent coverage, not all of it
+    def test_presented_block_is_capped(self):
+        for i in range(5):
+            self.write_log(f"2026-07-1{i}-x{i}.md",
+                           f"session: 1\n\n## taught\n- alpha: entry {i}\n")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("entry 4", out)
+        self.assertNotIn("entry 0", out)
+        self.assertIn("older", out)
+
+    # 13. a session's own teach-back target is never also a review item
+    def test_teach_back_keystone_is_not_queued_for_review(self):
+        self.settle()
+        self.set_record("alpha", status="active", next="2026-07-01")
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "open:2"
+        self.at(3)
+        out = S.cmd_begin(self.dir)
+        quiz = [l for l in out.splitlines() if l.startswith("quiz these")][0]
+        self.assertNotIn("alpha", quiz)
+
+    # 12. review sessions build fresh cases: no bank line
+    def test_review_session_brief_has_no_bank_line(self):
+        (self.dir / "plan.md").write_text(REVIEW_PLAN_MD, encoding="utf-8")
+        self.settle("alpha")
+        self.assertNotIn("banks spendable", S.cmd_begin(self.dir))
 
 
 class TestUnjustFail(CourseCase):

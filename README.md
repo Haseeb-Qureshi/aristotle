@@ -89,7 +89,7 @@ files at bootstrap and own them afterwards.
 | [`SPEC.md`](SPEC.md) | **Superseded** — the v2.1 design spec, kept for history |
 
 ```
-python3 -m unittest discover -s tests          # 210 tests
+python3 -m unittest discover -s tests          # 252 tests
 python3 scripts/schedule.py --course example-course check
 ```
 
@@ -101,13 +101,14 @@ fires, it reads `SKILL.md`. Skill discovery is by description: a plain
 "set me up a course on X" is enough for an agent that has never been
 told this repo exists.
 
-**By hand.** Copy `example-course/` as a starting shape, or run
-bootstrap against any topic. Every course directory is self-sufficient:
+**By hand.** Read `example-course/` to see the shape a finished course
+takes, then run bootstrap against your topic (never copy its state files —
+they describe someone else's learner). Every course directory is self-sufficient:
 it carries its own copy of the procedure and the engine, so it works on a
 machine that has never heard of this repo.
 
 The procedure files are split by **progressive disclosure**: a session
-loads `SKILL.md` (~1k words) and nothing else, unless `begin` sends it to
+loads `SKILL.md` (~1.8k words) and nothing else, unless `begin` sends it to
 `checkpoint.md`. Bootstrap and scheduling are separate because they run
 once per course, not once per session.
 

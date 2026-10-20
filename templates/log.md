@@ -1,8 +1,10 @@
 <!-- FORMAT — log/YYYY-MM-DD-<session>.md. `S begin` CREATES this file
      with the token pinned; append to it during the session and finish
      it before `S close`. <session> is the token begin printed: digits,
-     optional r-suffix for a repair (14, 14r, 14r2). close refuses any
-     other token, and refuses a log with no grade lines.
+     then optionally r (repair or catch-up — never advances the plan:
+     14r, 14r2) or b (a re-run of a slot whose first attempt ended without
+     a close: 14b, 14b2). close refuses any other token, and refuses a log
+     with no grade lines.
 
      KEEP IT SHORT (~25 lines). Grade lines are the ONLY channel into the state
      machine, and only lines under `## grades` are read — an example
@@ -33,7 +35,9 @@
        - <concept-id>: <what you presented> | without: <what you didn't>
 
      The `| without:` clause is optional; omit it when nothing notable
-     was held back. Keep each taught-line ONE physical line — a wrapped
+     was held back. A line that repays an `owed:` item from the brief
+     starts its text with `owed:` — `- alpha: owed: the second-order
+     case` — and only such a line ticks the item in owed.md. Keep each taught-line ONE physical line — a wrapped
      continuation reads as prose and is dropped — and every `- ` bullet
      under '## taught' is parsed as this grammar, so put commentary
      elsewhere. Ids match case-insensitively, and `close` HARD-ERRORS

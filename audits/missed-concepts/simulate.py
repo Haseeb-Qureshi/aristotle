@@ -25,7 +25,7 @@ for i in range(n):
         grades.append(f"- grade: {q} | result: pass | note: sim")
     for c in owed:
         if not any(t.startswith(f"- {c}:") for t in taught):
-            taught.append(f"- {c}: owed item repaid in a correction")
+            taught.append(f"- {c}: owed: repaid in a correction")
     if not grades:  # review/consolidation with empty queue: nothing to log
         grades.append(f"- grade: {quiz[0] if quiz else 'token-pnl'} | result: pass | note: sim")
     log = course / g("log file")
