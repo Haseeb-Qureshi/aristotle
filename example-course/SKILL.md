@@ -41,7 +41,9 @@ untaught here: switching-costs, data-network-effects
   untaught means untaught — whatever you remember mentioning about
   these, the learner has not been taught them; teach from the
   worked example.
-quiz these (3): inference-cost, gross-margin, scale-economies
+teach: switching-costs — why a customer stays after a cheaper offer
+review: 1 · as an exit ticket — ask it right before the goodnight
+quiz these (1): gross-margin
 last session: 13 on 2026-05-04 (2 days ago)
 open question: why is the cheapest chip in the rack the one nobody can buy?
 asked recently (do not reuse — a new case means a new decision and
@@ -87,8 +89,10 @@ however clearly you remember mentioning it.
   session repeats it. **Do not replay the same opener.** Ask what stuck
   from last time and start from there; re-teaching verbatim is how you
   teach someone you weren't listening.
-- *"the previous session's close was recovered just now"* — a finished
-  session's grades only just landed. Nothing to do; the queue is right.
+- *"the previous session ended without a close"* — its grades are
+  saved, but its slot was never finished, so this session re-runs it
+  under a new token. Its questions are under `asked recently`: open
+  differently, and teach what it did not reach.
 
 Then read the unit's `assets/` file, its `sources/` notes, and
 `knowledge-state.md` — the `note:` column holds what they got wrong last
@@ -131,8 +135,11 @@ it records, not from what you remember. A crash mid-session now costs
 nothing already appended — recovery commits a draft that holds
 evidence.
 
-**Then the retrieval block.** Quiz exactly the concepts `begin` listed,
-cold. `begin` told you what is already spent: a stored bank item is used
+**Then the retrieval, where the `review:` line puts it.** `begin`
+varies it on purpose: `at the open`, `as an exit ticket` (the last thing
+before the goodnight — it is part of the close, not optional), split
+between the two, or `none` (no retrieval today; the queue rolls
+forward). Quiz exactly the concepts `begin` listed, cold, in that slot. `begin` told you what is already spent: a stored bank item is used
 ONCE in the whole course, and after that every probe of the concept is a
 case you build fresh. Fresh is structural — a different decision,
 different evidence, a different inference chain — not the same case
@@ -163,6 +170,17 @@ on material the record shows was taught. This is not grade inflation —
 you put the missing fact in the question, so the grade stands on the
 inference the question actually demanded.
 
+**No undefined terms in a question.** Every term of art you put in a
+question must appear in that concept's `presented` record or be defined
+in the question itself. "PPA" once went into a question two sessions
+after a log recorded PPA mechanics as never taught.
+
+**Repay what is owed.** An `owed:` line is material an earlier session
+skipped on purpose and the course wants back. Teach it in a sentence or
+two where it fits — the correction after that concept's item, or inside
+the lesson — never as a lecture, then log it as a coverage line for that
+concept (close ticks it only then).
+
 > After **every** item, in the same turn: the right answer, and if they
 > missed, name the misconception they hit **in plain words**. Never say
 > "M1" out loud.
@@ -188,7 +206,8 @@ never leak into prose.
 
 ## 3. Middles, by the type `begin` printed
 
-**standard** — teach the unit's next untaught concept, worked example
+**standard** — teach the concept on the `teach:` line (its `def` is
+the core a `taught` grade claims you presented), worked example
 first. **One new concept per session, always** — this is the rule most
 worth holding when you feel behind. Then one problem from the unit's
 `## interleaved` set: they must say *which* concept applies before
@@ -229,6 +248,12 @@ if the course has one. By now every bank item is long spent — if you
 cannot build a case structurally unlike the ledger, skip the concept
 rather than paraphrase it.
 
+**catch-up** — a unit ended still owing something: a whole concept
+never taught (`teach:` — an ordinary first teaching, from its unit's
+assets) or a graded teach-back that never happened (`teach-back:` — run
+it exactly as a teach-back). Fractional token; the plan counter does
+not move. Retrieval follows the `review:` line as usual.
+
 **repair** — one concept, one session, on a fractional token so the
 counter doesn't move. Re-teach from its worked example, then one
 application. The course moves on either way.
@@ -256,7 +281,8 @@ the next `begin` finds a stale lock with no log and cleans it away.
 
 So **you** own the trigger: the moment you have taught the concept
 `begin` named and they have answered one application question about it —
-typically 6–10 exchanges — close. Immediately, before replying to
+and the exit ticket, if the `review:` line set one — typically 6–10
+exchanges, close. Immediately, before replying to
 anything else.
 
 Closing is silent and takes seconds. **If they keep talking afterwards,

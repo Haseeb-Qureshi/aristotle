@@ -21,6 +21,7 @@ The rest are for lifecycle and repair:
   seed <id> <band>            placement calibration (idempotent)
   set-verify <id> <mech>      adjudication verdicts
   reprune <ids>               shrink the course coherently
+  owe <id> "<material>"       add skipped material to owed.md (authoring)
   commit-grades <logfile>     apply grades only (close does this for you)
 
 State ownership: knowledge-state.md and plan.md's header are written ONLY
@@ -28,10 +29,12 @@ by this script. Mastery is DERIVED from interval and fails, never stored —
 there is no band to inflate.
 
 Test hooks: ARISTOTLE_TODAY (YYYY-MM-DD) pins "today"; ARISTOTLE_NOW pins
-the recovery clock.
+the recovery clock; ARISTOTLE_REVIEW_PLAN ("none", "open:2", "exit:1",
+"split:2") pins a teaching session's review shape.
 """
 
 import argparse
+import hashlib
 import datetime as dt
 import os
 import re
@@ -270,7 +273,7 @@ def parse_map(course: Path):
         # Controversies, Errata) — otherwise their lines leak into it
         body = _strip_comments(re.split(r"^## ", body, 1, flags=re.M)[0])
         c = {"prereqs": [], "verify": "quiz", "threshold": "no",
-             "misconceptions": []}
+             "misconceptions": [], "def": ""}
         in_misc = False
         for line in body.splitlines():
             indented = line.startswith((" ", "\t"))
@@ -290,6 +293,8 @@ def parse_map(course: Path):
                                 re.split(r"[,\s]+", v.strip("[]")) if p]
             elif k in ("verify", "threshold"):
                 c[k] = v
+            elif k == "def" and not indented:
+                c["def"] = v
         concepts[cid] = c
     for op, a, b in ERRATUM_RE.findall(text):
         if b in concepts:
@@ -415,7 +420,9 @@ def write_unit_status(course: Path, num: int, status: str):
 
 # ---------------------------------------------------------- grade lines
 
-SESSION_TOKEN_RE = re.compile(r"^\d+(r\d*)?$")
+# digits = the plan slot; r = repair/catch-up (never advances the counter);
+# b = a re-run of a slot whose first attempt was abandoned and replayed
+SESSION_TOKEN_RE = re.compile(r"^\d+(r\d*|b\d*)?$")
 GRADE_RE = re.compile(
     r"^- grade:\s*(\S+)\s*\|\s*result:\s*(\S+)\s*\|\s*note:\s*(.*)$")
 LOOKS_LIKE_GRADE = re.compile(r"grade\s*\**\s*:", re.I)
@@ -693,7 +700,7 @@ def cmd_commit_grades(course: Path, logfile: Path):
 
 # ------------------------------------------------------------------ queue
 
-def build_queue(course: Path, cap=QUEUE_CAP, terminal=False):
+def build_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh"):
     course = Path(course)
     meta, records = load_state(course)
     today = _today(course).isoformat()
@@ -704,15 +711,29 @@ def build_queue(course: Path, cap=QUEUE_CAP, terminal=False):
         live.sort(key=lambda r: (-r["fails"], r["interval"]))
         return [r["id"] for r in live[:cap]]
     due = [r for r in live if r["next"] not in ("-", "") and r["next"] <= today]
-    # oldest-first, but never let the backlog crowd out the material the
-    # current unit is actually about
-    due.sort(key=lambda r: (r["interval"], r["next"]))
-    return [r["id"] for r in due[:cap]]
+    # Alternate two lists. Sorting everything by interval alone meant the
+    # freshest material won every slot and older units starved (live
+    # course, Sep-Oct 2026: units 1-3 unreviewed for six weeks, items 66
+    # days overdue). Fresh = just taught or just failed; backlog = ranked
+    # by how far past due relative to its own interval.
+    t0 = dt.date.fromisoformat(today)
+
+    def lateness(r):
+        return (t0 - dt.date.fromisoformat(r["next"])).days / max(1, r["interval"])
+    fresh = sorted((r for r in due if r["interval"] <= 3),
+                   key=lambda r: (r["interval"], r["next"]))
+    backlog = sorted((r for r in due if r["interval"] > 3),
+                     key=lambda r: -lateness(r))
+    first, second = (fresh, backlog) if lead == "fresh" else (backlog, fresh)
+    out = []
+    for i in range(max(len(first), len(second))):
+        out += [r["id"] for r in (first[i:i + 1] + second[i:i + 1])]
+    return out[:cap]
 
 
-def cmd_queue(course: Path, cap=QUEUE_CAP, terminal=False):
+def cmd_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh"):
     course = Path(course)
-    ids = build_queue(course, cap=cap, terminal=terminal)
+    ids = build_queue(course, cap=cap, terminal=terminal, lead=lead)
     meta, records = load_state(course)
     today = _today(course).isoformat()
     total_due = sum(1 for r in records.values()
@@ -1249,6 +1270,16 @@ def dispatch(course: Path):
         out["why"] = f"repair owed on {meta['repair-pending']}"
         out["concept"] = meta["repair-pending"]
         return out
+    owed = owed_items(course)
+    if owed:
+        o = owed[0]
+        out["type"], out["unit"] = "catch-up", o["unit"]
+        out["owed"], out["concept"] = o["kind"], o["concept"]
+        out["why"] = (f"unit {o['unit']['num']} ended owing "
+                      + ("a first teaching of " if o["kind"] == "teach"
+                         else "a graded teach-back of ")
+                      + f"{o['concept']} — {len(owed)} owed item(s) in all")
+        return out
 
     here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
     if here is None:
@@ -1273,7 +1304,14 @@ def dispatch(course: Path):
                     and u["num"] > here["num"]), None)
         if nxt and not assets_path(course, nxt["num"]).exists():
             out["author"] = assets_path(course, nxt["num"]).name
-    if idx == here["end"]:
+    left = [c for c in here["concepts"]
+            if records.get(c, {}).get("status") == "untaught"]
+    if idx == here["end"] and left:
+        # coverage before ritual: the keystone's teach-back is owed instead
+        out["type"] = "standard"
+        out["why"] = (f"last slot of unit {here['num']}, but {left[0]} is "
+                      "still untaught — teach it; the teach-back is owed")
+    elif idx == here["end"]:
         out["type"], out["cap"] = "teach-back", QUEUE_CAP
         out["why"] = f"last session of unit {here['num']}"
     else:
@@ -1382,6 +1420,151 @@ def _repair_missing_taught(path: Path):
     path.write_text(text, encoding="utf-8")
 
 
+# Review shape for sessions that teach: (placement, items, weight). Drawn
+# per session from a hash of the token so two agents running begin for
+# the same session agree, yet sessions differ — the fixed "two items at
+# the open" became a ritual the learner called aggressive and repetitive.
+REVIEW_SHAPES = [("none", 0, 0.12), ("open", 1, 0.22), ("exit", 1, 0.22),
+                 ("open", 2, 0.18), ("split", 2, 0.26)]
+REVIEW_LINES = {
+    "none": "review: none this session — due items roll forward",
+    "open": "review: {n} · at the open",
+    "exit": "review: {n} · as an exit ticket — ask it right before the "
+            "goodnight; it is part of the close",
+    "split": "review: {n} · one at the open, one as the exit ticket right "
+             "before the goodnight",
+}
+
+
+def _draw(course: Path, token: str, salt: str) -> float:
+    h = hashlib.sha256(f"{course_label(course)}|{token}|{salt}".encode())
+    return int(h.hexdigest()[:8], 16) / 2 ** 32
+
+
+def review_plan(course: Path, token: str, previous):
+    """(placement, n) for one teaching session. ARISTOTLE_REVIEW_PLAN
+    ('none', 'open:2', 'exit:1', ...) pins it — tests and operators."""
+    pinned = os.environ.get("ARISTOTLE_REVIEW_PLAN", "").strip()
+    if pinned:
+        place, _, n = pinned.partition(":")
+        return (place, int(n or 0))
+    shapes = [s for s in REVIEW_SHAPES
+              if not (previous == "none" and s[0] == "none")]
+    total = sum(w for _, _, w in shapes)
+    x, acc = _draw(course, token, "shape") * total, 0.0
+    for place, n, w in shapes:
+        acc += w
+        if x < acc:
+            return (place, n)
+    return shapes[-1][:2]
+
+
+def _brief_comment(text: str):
+    m = re.search(r"<!-- brief: (.*?) -->", text)
+    if not m:
+        return {}
+    return dict(kv.split("=", 1) for kv in m.group(1).split() if "=" in kv)
+
+
+def _previous_review(course: Path):
+    """The review shape of the most recent teaching session's brief."""
+    for path in sorted((Path(course) / "log").glob("*.md"), reverse=True):
+        rev = _brief_comment(_read(path)).get("review")
+        if rev:
+            return "none" if rev == "none" else rev.split(":")[0]
+    return None
+
+
+# ------------------------------------------------------------- owed.md
+# The course author's agenda of skipped material worth repaying: sessions
+# rightly leave material out (`without:`), but nothing ever scheduled it
+# back — the live course re-recorded the same omission up to 7 times.
+OWED_RE = re.compile(r"^- \[( |x)\] (\S+) \| (.+)$")
+
+
+def _owed_open(course: Path):
+    path = Path(course) / "owed.md"
+    if not path.exists():
+        return []
+    out = []
+    for n, line in enumerate(_read(path).splitlines()):
+        m = OWED_RE.match(line.strip())
+        if m and m.group(1) == " ":
+            out.append((n, m.group(2), m.group(3).strip()))
+    return out
+
+
+def cmd_owe(course: Path, cid: str, material: str):
+    """Append an owed item. Authoring, not grading: validates the id."""
+    course = Path(course)
+    if cid not in parse_map(course):
+        raise IntegrityError(f"owe: {cid!r} is not in the domain map")
+    if "|" in material or not material.strip():
+        raise IntegrityError("owe: material must be non-empty, no '|'")
+    path = course / "owed.md"
+    head = "" if path.exists() else (
+        "# Owed material\n\nSkipped material worth repaying, offered one "
+        "item per concept when a session touches it. Ticked by close.\n\n")
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(f"{head}- [ ] {cid} | {material.strip()}\n")
+
+
+def _tick_owed(course: Path, pins, text: str):
+    path = Path(course) / "owed.md"
+    if not pins or not path.exists():
+        return
+    covered = {c.casefold() for c, _, _ in _taught_items(text)}
+    lines = _read(path).splitlines()
+    changed = False
+    for pin in pins:
+        if not pin.isdigit() or int(pin) >= len(lines):
+            continue
+        m = OWED_RE.match(lines[int(pin)].strip())
+        if m and m.group(1) == " " and m.group(2).casefold() in covered:
+            lines[int(pin)] = lines[int(pin)].replace("- [ ]", "- [x]", 1)
+            changed = True
+    if changed:
+        _write(path, "\n".join(lines) + "\n")
+
+
+def _rubric_evidence(course: Path, committed):
+    """Concepts with any teach-back grade in a committed log."""
+    out = set()
+    for path in sorted((Path(course) / "log").glob("*.md")):
+        text = _read(path)
+        if _log_token(path, text) not in committed:
+            continue
+        try:
+            _, grades = parse_log_grades(text)
+        except (FormatError, IntegrityError):
+            continue
+        out |= {g["id"] for g in grades if g["result"].startswith("rubric")}
+    return out
+
+
+def owed_items(course: Path):
+    """What units whose slots have all passed still owe — derived from
+    state on every call, so it can never drift and vanishes the moment
+    the evidence lands. Whole concepts first (in unit order), then
+    teach-backs: a keystone is owed one when its unit ended without any
+    rubric grade. (Live course, 2026-10: unit 4 ended with neocloud-model
+    untaught; units 2-4 ended with no graded teach-back.)"""
+    course = Path(course)
+    header, units = parse_plan(course)
+    meta, records = load_state(course)
+    idx = session_index(header)
+    ended = [u for u in units if u.get("num") is not None and u["end"] < idx]
+    teach = [{"kind": "teach", "concept": c, "unit": u}
+             for u in ended for c in u["concepts"]
+             if records.get(c, {}).get("status") == "untaught"]
+    graded = _rubric_evidence(course, meta["committed-sessions"])
+    backs = [{"kind": "teach-back", "concept": k, "unit": u}
+             for u in ended for k in u["keystones"]
+             if k in records and records[k]["status"] != "untaught"
+             and k not in graded]
+    return teach + backs
+
+
 def cmd_recover(course: Path):
     """Three-way recovery, decidable from structure alone.
 
@@ -1415,7 +1598,15 @@ def cmd_recover(course: Path):
     if logs:
         try:
             _repair_missing_taught(logs[-1])  # recovery favors keeping grades
-            cmd_commit_grades(course, logs[-1])  # no-op if already applied
+            applied = cmd_commit_grades(course, logs[-1])
+            if applied == "applied":
+                # the learner did attend; the slot itself is NOT done —
+                # begin re-runs it under a fresh token (see _next_token)
+                header = parse_plan(course)[0]
+                write_plan_header(course, {
+                    "sessions-done": int(header["sessions-done"]) + 1,
+                    "last-attended": _today(course).isoformat(),
+                    "re-entry-pending": "no"})
             sentinel.unlink()
             _commit(course, f"recover: replayed session {session}")
             return "replayed"
@@ -1433,13 +1624,18 @@ def cmd_recover(course: Path):
 # ------------------------------------------------------------ begin / close
 
 def _next_token(idx: int, kind: str, committed) -> str:
-    if kind != "repair":
+    """Never a committed token. A replayed draft banks its grades under
+    token N without advancing the counter, so the slot re-runs as Nb —
+    re-issuing N made the re-run's close a silent no-op that threw its
+    grades away (live course, sessions 21/24/25/33)."""
+    suffix = "r" if kind in ("repair", "catch-up") else "b"
+    if suffix == "b" and str(idx) not in committed:
         return str(idx)
     for n in range(1, 50):
-        tok = f"{idx}r" if n == 1 else f"{idx}r{n}"
+        tok = f"{idx}{suffix}" if n == 1 else f"{idx}{suffix}{n}"
         if tok not in committed:
             return tok
-    raise IntegrityError(f"session {idx} has been repaired 49 times")
+    raise IntegrityError(f"session {idx} has been re-run 49 times")
 
 
 def course_label(course: Path) -> str:
@@ -1520,12 +1716,15 @@ def _last_log(course: Path):
     path = logs[-1]
     m = re.match(r"(\d{4}-\d\d-\d\d)-(.+)\.md$", path.name)
     date, token = (m.group(1), m.group(2)) if m else ("", "")
-    text = _read(path)
     q = ""
-    m = re.search(r"^##+\s*open question\s*$(.*?)(?=^##\s|\Z)",
-                  text, re.M | re.I | re.S)
-    if m:
-        q = " ".join(m.group(1).split())
+    # an abandoned draft has no open question; the learner's way back in
+    # is the newest one actually written at a close
+    for older in reversed(logs):
+        m = re.search(r"^##+\s*open question\s*$(.*?)(?=^##\s|\Z)",
+                      _read(older), re.M | re.I | re.S)
+        if m and m.group(1).strip():
+            q = " ".join(m.group(1).split())
+            break
     return path, token, date, q
 
 
@@ -1574,7 +1773,13 @@ def cmd_begin(course: Path):
     with os.fdopen(fd, "w") as fh:
         fh.write(f"session: {token}\n")
 
-    ids = cmd_queue(course, cap=d["cap"], terminal=d["terminal"])
+    plan = None
+    lead = "fresh"
+    if d["type"] in ("standard", "catch-up", "teach-back"):
+        plan = review_plan(course, token, _previous_review(course))
+        d["cap"] = plan[1]
+        lead = "backlog" if _draw(course, token, "lead") < 0.5 else "fresh"
+    ids = cmd_queue(course, cap=d["cap"], terminal=d["terminal"], lead=lead)
     _, records = load_state(course)
     lines = [f"recover: {state}",
              f"course: {course_label(course)}",
@@ -1583,6 +1788,7 @@ def cmd_begin(course: Path):
              # the exact filename, so the tutor never computes a date
              # (a UTC-clocked tutor otherwise drifts off the course tz)
              f"log file: log/{_today(course).isoformat()}-{token}.md"]
+    target = None
     if d.get("concept"):
         lines.append(f"concept: {d['concept']}")
     if d["unit"]:
@@ -1599,8 +1805,25 @@ def cmd_begin(course: Path):
             lines.append("  untaught means untaught — whatever you remember "
                          "mentioning about these, the learner has not been "
                          "taught them; teach from the worked example.")
+        # what this session teaches, with the domain map's definition: the
+        # def line is the core a `taught` grade asserts was presented
+        target = None
+        if d["type"] == "catch-up":
+            target = d["concept"]
+        elif d["type"] == "standard" and untaught:
+            target = untaught[0]
+        backs = ([d["concept"]] if d.get("owed") == "teach-back"
+                 else u["keystones"] if d["type"] == "teach-back" else [])
+        for k in backs:
+            lines.append(f"teach-back: {k} — grade against its "
+                         f"## rubric block in assets/unit-{u['num']:02d}.md")
+        if target and not backs:
+            dfn = parse_map(course).get(target, {}).get("def", "")
+            lines.append(f"teach: {target}" + (f" — {dfn}" if dfn else ""))
         if u["artifact"] and u["artifact"] != "none":
             lines.append(f"artifact-milestone: {u['artifact']}")
+    if plan:
+        lines.append(REVIEW_LINES[plan[0]].format(n=plan[1]))
     lines.append(f"quiz these ({len(ids)}): {', '.join(ids) or '-'}")
     if d["author"]:
         lines.append(f"author-after-close: {d['author']}")
@@ -1647,6 +1870,19 @@ def cmd_begin(course: Path):
                      + (", ".join(spendable_banks(course)) or "-")
                      + " — items from unreached units are off-limits")
 
+    touched = list(dict.fromkeys(ids + [c for c in (target, d.get("concept"))
+                                         if c]))
+    owed_pins = []
+    offered = set()
+    for n, cid, material in _owed_open(course):
+        if cid in touched and cid not in offered:
+            if not offered:
+                lines.append("owed — teach each in a correction or in the "
+                             "lesson, briefly, then log it as a coverage line:")
+            lines.append(f"owed: {cid} — {material}")
+            offered.add(cid)
+            owed_pins.append(str(n))
+
     if state == "reset" and abandoned_age is not None:
         hrs = int(abandoned_age.total_seconds() // 3600)
         lines.append(
@@ -1656,18 +1892,40 @@ def cmd_begin(course: Path):
             "already landed before re-teaching it.")
     elif state == "replayed":
         lines.append(
-            "NOTE: the previous session's close was recovered just now — "
-            "its grades have only just been applied.")
+            "NOTE: the previous session ended without a close. Its grades "
+            "are saved, but its slot was never finished, so this session "
+            "re-runs it. Its questions are under `asked recently` — do not "
+            "repeat its opener or its cases; teach what it did not reach.")
 
     # The draft pins the token mechanically and makes mid-session
     # evidence durable: a tutor that loses its context mid-lesson reads
     # this file instead of improvising, and grades already appended
     # survive a crash (recovery replays any draft that holds evidence).
     draft = course / "log" / f"{_today(course).isoformat()}-{token}.md"
+    # a declined session leaves its empty draft behind, and the next close
+    # commits it as clutter; one with posed questions stays — ledger
+    for old in (course / "log").glob("*.md"):
+        if old == draft:
+            continue
+        body = _read(old)
+        if not any(_section(body, h).strip() for h in
+                   (TAUGHT_HEAD_RE, ASKED_HEAD_RE, re.compile(
+                       r"^##+\s*grades\s*$", re.M | re.I))):
+            old.unlink()
     if not draft.exists():
         draft.parent.mkdir(exist_ok=True)
+        # pin what this session was FOR, so close can tell an off-brief
+        # grade (session 33's PPA probe was on a concept nobody queued)
+        teach = [c for c in (target, d.get("concept")) if c]
+        if d["type"] == "teach-back" and d["unit"]:
+            teach += d["unit"]["keystones"]
+        brief = (f"review={'none' if plan and plan[1] == 0 else f'{plan[0]}:{plan[1]}' if plan else '-'} "
+                 f"quiz={','.join(ids) or '-'} "
+                 f"teach={','.join(dict.fromkeys(teach)) or '-'} "
+                 f"owed={','.join(owed_pins) or '-'}")
         draft.write_text(
-            f"session: {token}\n\n## taught\n\n## grades\n\n## asked\n\n"
+            f"session: {token}\n<!-- brief: {brief} -->\n\n"
+            "## taught\n\n## grades\n\n## asked\n\n"
             "## open question\n", encoding="utf-8")
     return "\n".join(lines)
 
@@ -1684,6 +1942,21 @@ def cmd_close(course: Path, logfile: Path):
     # the fence is read BEFORE the close moves the counter and the unit
     # statuses: what was reachable when the question was asked
     warnings = _unreached_bank_warnings(course, text)
+    brief = _brief_comment(text)
+    if brief.get("quiz"):
+        allowed = {c for k in ("quiz", "teach")
+                   for c in brief.get(k, "-").split(",") if c != "-"}
+        try:
+            graded = [g["id"] for g in parse_log_grades(text)[1]]
+        except (FormatError, IntegrityError):
+            graded = []
+        off = [c for c in graded if c not in allowed]
+        if off:
+            warnings.append(
+                f"warn: graded {', '.join(off)} but the brief queued "
+                f"{brief.get('quiz')} and taught {brief.get('teach')} — an "
+                "off-brief probe skips the presented-record check and burns "
+                "single-use novelty (SKILL §5).")
 
     sentinel = course / SENTINEL
     if sentinel.exists():
@@ -1696,23 +1969,47 @@ def cmd_close(course: Path, logfile: Path):
                 "— refusing to close someone else's session")
 
     applied = cmd_commit_grades(course, logfile)
+    if applied == "applied":
+        _tick_owed(course, [x for x in brief.get("owed", "-").split(",")
+                            if x != "-"], text)
     header, units = parse_plan(course)
     idx = session_index(header)
     today = _today(course)
 
-    updates = {"sessions-done": int(header["sessions-done"]) + 1,
-               "last-attended": today.isoformat(),
-               "re-entry-pending": "no"}
-    # a repair session carries a fractional token; it must not move the counter
-    advanced = not session.rstrip("0123456789").endswith("r")
+    updates = {}
+    if applied == "applied":
+        updates = {"sessions-done": int(header["sessions-done"]) + 1,
+                   "last-attended": today.isoformat(),
+                   "re-entry-pending": "no"}
+    # repair/catch-up tokens (r) never move the counter; and nothing moves
+    # it unless it still points at this token's slot — a close that
+    # crashed after advancing must not skip a slot when re-run
+    slot = int(re.match(r"\d+", session).group(0))
+    advanced = (not session.rstrip("0123456789").endswith("r")
+                and idx == slot)
     if advanced:
         updates["next-session"] = f"{idx + 1}/{course_size(header)}"
-    write_plan_header(course, updates)
+    if updates:
+        write_plan_header(course, updates)
 
     here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
-    if here and advanced and here.get("num") is not None:
-        write_unit_status(course, here["num"],
-                          "taught" if idx >= here["end"] else "in-progress")
+    # unit status follows CONTENT: a unit is taught when its slots have
+    # passed AND every concept in it has been taught — re-evaluated for
+    # every unit on every close, so paying a debt in a catch-up session
+    # flips the unit it belonged to
+    _, records = load_state(course)
+    new_idx = session_index(parse_plan(course)[0])
+    for u in units:
+        if u.get("num") is None:
+            continue
+        is_here = here is not None and u is here and advanced
+        if not is_here and u["end"] >= new_idx:
+            continue          # not this session's unit, and not yet ended
+        done = all(records.get(c, {}).get("status") != "untaught"
+                   for c in u["concepts"])
+        status = "taught" if (new_idx > u["end"] and done) else "in-progress"
+        if status != u["status"]:
+            write_unit_status(course, u["num"], status)
 
     cmd_queue(course)
     _commit(course, f"session {session}")
@@ -1739,6 +2036,9 @@ def main(argv=None):
     p = sub.add_parser("seed")
     p.add_argument("id")
     p.add_argument("evidence", choices=sorted(SEED_INTERVAL))
+    p = sub.add_parser("owe")
+    p.add_argument("id")
+    p.add_argument("material")
     p = sub.add_parser("set-verify")
     p.add_argument("id")
     p.add_argument("mech", choices=sorted(VERIFIES))
@@ -1765,6 +2065,8 @@ def main(argv=None):
             cmd_seed(course, a.id, a.evidence)
         elif a.cmd == "commit-grades":
             print(cmd_commit_grades(course, Path(a.logfile)))
+        elif a.cmd == "owe":
+            cmd_owe(course, a.id, a.material)
         elif a.cmd == "set-verify":
             cmd_set_verify(course, a.id, a.mech)
         elif a.cmd == "reprune":

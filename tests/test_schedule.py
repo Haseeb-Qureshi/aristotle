@@ -173,6 +173,8 @@ class CourseCase(unittest.TestCase):
         (self.dir / "log").mkdir()
         os.environ["ARISTOTLE_TODAY"] = TODAY
         self.addCleanup(os.environ.pop, "ARISTOTLE_TODAY", None)
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "open:2"
+        self.addCleanup(os.environ.pop, "ARISTOTLE_REVIEW_PLAN", None)
         self.addCleanup(os.environ.pop, "ARISTOTLE_NOW", None)
 
     # helpers -----------------------------------------------------------
@@ -203,6 +205,17 @@ class CourseCase(unittest.TestCase):
 
     def git_init(self):
         S._ensure_repo(self.dir)
+
+    def settle(self, *keystones):
+        """Make every concept taught and give each named keystone a
+        committed teach-back, so an ended unit owes nothing and dispatch
+        reaches the slot type the test is about (not a catch-up)."""
+        for cid in ("alpha", "beta", "gamma", "delta"):
+            if self.rec(cid)["status"] == "untaught":
+                self.set_record(cid, status="active", next="2026-08-30")
+        for k in keystones:
+            self.write_log(f"2026-07-19-{k}.md",
+                           log_text("1", (k, "rubric-pass", "x")))
 
     def cli(self, *args, env=None):
         e = dict(os.environ)
@@ -987,6 +1000,7 @@ class TestDispatch(CourseCase):
         self.assertEqual(d["cap"], S.TEACHING_CAP)
 
     def test_teach_back_on_the_units_last_session(self):
+        self.settle()
         self.hdr(**{"next-session": "3/10"})
         d = S.dispatch(self.dir)
         self.assertEqual(d["type"], "teach-back")
@@ -1015,6 +1029,7 @@ class TestDispatch(CourseCase):
         self.assertEqual((d["type"], d["concept"]), ("repair", "alpha"))
 
     def test_consolidation_after_the_last_unit(self):
+        self.settle("alpha", "gamma")
         self.hdr(**{"next-session": "8/10"})
         d = S.dispatch(self.dir)
         self.assertEqual(d["type"], "consolidation")
@@ -1124,6 +1139,7 @@ class TestBeginClose(CourseCase):
         self.assertFalse((self.dir / S.SENTINEL).exists())
 
     def test_close_marks_the_unit_taught_on_its_last_session(self):
+        self.settle()
         S.write_plan_header(self.dir, {"next-session": "3/10"})
         self.add_u2_assets()
         S.cmd_begin(self.dir)
@@ -1699,6 +1715,7 @@ class TestReviewBlocks(CourseCase):
     def setUp(self):
         super().setUp()
         (self.dir / "plan.md").write_text(REVIEW_PLAN_MD, encoding="utf-8")
+        self.settle("alpha")
 
     def test_review_block_dispatches_as_mixed_review(self):
         S.cmd_check(self.dir)                     # no assets, no floor demand
@@ -1780,6 +1797,18 @@ class TestDraftLog(CourseCase):
                      "## open question"):
             self.assertIn(head, text)
 
+    def test_begin_sweeps_wholly_empty_drafts_of_other_sessions(self):
+        self.git_init()
+        empty = self.dir / "log" / "2026-07-20-2b.md"
+        empty.write_text("session: 2b\n\n## taught\n\n## grades\n\n"
+                         "## asked\n\n## open question\n", encoding="utf-8")
+        asked = self.dir / "log" / "2026-07-20-2b2.md"
+        asked.write_text("session: 2b2\n\n## asked\n- a posed case\n",
+                         encoding="utf-8")
+        S.cmd_begin(self.dir)
+        self.assertFalse(empty.exists())
+        self.assertTrue(asked.exists())  # a posed question is ledger evidence
+
     def test_begin_never_clobbers_an_existing_log(self):
         self.git_init()
         p = self.dir / "log" / f"{TODAY}-2.md"
@@ -1839,6 +1868,294 @@ class TestUntaughtMeansUntaught(CourseCase):
         out = S.cmd_begin(self.dir)
         self.assertIn("untaught here: -", out)
         self.assertNotIn("untaught means untaught", out)
+
+
+class TestReplayNeverAdvances(CourseCase):
+    """Replaying an abandoned draft used to apply its grades but leave the
+    counter alone, so the next begin re-issued the SAME token and that
+    session's close was a silent no-op: its grades were thrown away
+    (sessions 21, 24, 25, 33 of the live course, 2026-09/10). Now a replay
+    banks the draft's grades and attendance, and the slot re-runs under a
+    distinct token whose close applies and advances exactly once."""
+
+    def stale(self, token):
+        p = self.dir / S.SENTINEL
+        p.write_text(f"session: {token}\n", encoding="utf-8")
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+
+    def abandon_with_grades(self):
+        self.git_init()
+        S.cmd_begin(self.dir)
+        self.write_log(f"{TODAY}-2.md",
+                       log_text("2", ("alpha", "pass", "landed")))
+        self.stale("2")
+
+    def header(self):
+        return S.parse_plan(self.dir)[0]
+
+    def test_replay_banks_grades_but_the_slot_reruns(self):
+        self.abandon_with_grades()
+        out = S.cmd_begin(self.dir)
+        self.assertIn("session: 2b of", out)
+        self.assertEqual(self.rec("alpha")["interval"], 3)
+        self.assertEqual(self.header()["next-session"], "2/10")
+
+    def test_replay_counts_the_attendance(self):
+        self.abandon_with_grades()
+        S.cmd_begin(self.dir)
+        self.assertEqual(self.header()["last-attended"], TODAY)
+        self.assertEqual(int(self.header()["sessions-done"]), 2)
+
+    def test_the_rerun_close_applies_its_grades_and_advances(self):
+        self.abandon_with_grades()
+        S.cmd_begin(self.dir)
+        p = self.write_log(f"{TODAY}-2b.md",
+                           log_text("2b", ("beta", "taught", "intro")))
+        out = S.cmd_close(self.dir, p)
+        self.assertIn("(applied)", out)
+        self.assertEqual(self.rec("beta")["status"], "active")
+        self.assertEqual(self.header()["next-session"], "3/10")
+
+    def test_close_never_advances_twice(self):
+        """A crash after the counter moved but before the unlock must not
+        let a second close (or a replay) skip a slot."""
+        self.git_init()
+        p = self.write_log(f"{TODAY}-2.md",
+                           log_text("2", ("alpha", "pass", "x")))
+        S.cmd_close(self.dir, p)
+        self.assertEqual(self.header()["next-session"], "3/10")
+        (self.dir / S.SENTINEL).write_text("session: 2\n", encoding="utf-8")
+        S.cmd_close(self.dir, p)
+        self.assertEqual(self.header()["next-session"], "3/10")
+
+    def test_replay_note_says_the_slot_reruns(self):
+        self.abandon_with_grades()
+        out = S.cmd_begin(self.dir)
+        self.assertIn("re-runs", out)
+        self.assertNotIn("Nothing to do", out)
+
+    def test_open_question_survives_an_abandoned_draft(self):
+        self.git_init()
+        self.write_log("2026-07-20-1.md",
+                       log_text("1", ("alpha", "pass", "x"),
+                                extra="why does alpha precede beta?"))
+        S.cmd_begin(self.dir)  # creates an empty session-2 draft
+        (self.dir / S.SENTINEL).unlink()
+        self.assertIn("open question: why does alpha precede beta?",
+                      S.cmd_begin(self.dir))
+
+    def test_begin_never_issues_a_committed_token(self):
+        self.set_meta(**{"committed-sessions": ["1", "2"]})
+        self.assertIn("session: 2b of", S.cmd_begin(self.dir))
+        self.set_meta(**{"committed-sessions": ["1", "2", "2b"]})
+        (self.dir / S.SENTINEL).unlink()
+        self.assertIn("session: 2b2 of", S.cmd_begin(self.dir))
+
+
+class TestCoverageIsAUnitCondition(CourseCase):
+    """A unit used to be 'taught' when its last slot passed, whatever was
+    covered. Unit 4 of the live course ended with neocloud-model never
+    taught, and units 2-4 ended without a graded teach-back; nothing ever
+    noticed. Now unit status follows content, the unit-end slot yields to
+    an untaught concept, and an ended unit's leftovers are owed: taught in
+    catch-up sessions that never consume a plan slot."""
+
+    def at(self, n):
+        S.write_plan_header(self.dir, {"next-session": f"{n}/10"})
+
+    def rubric_log(self):
+        # session 1 is committed in the fixture; this is its teach-back
+        self.write_log("2026-07-19-1.md",
+                       log_text("1", ("alpha", "rubric-pass", "x")))
+
+    def test_unit_end_slot_yields_to_an_untaught_unit_concept(self):
+        self.at(3)
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: standard", out)
+        self.assertIn("teach: beta", out)
+
+    def test_unit_with_an_untaught_concept_stays_in_progress(self):
+        self.git_init()
+        self.at(3)
+        p = self.write_log(f"{TODAY}-3.md",
+                           log_text("3", ("alpha", "pass", "x")))
+        S.cmd_close(self.dir, p)
+        unit1 = S.parse_plan(self.dir)[1][0]
+        self.assertEqual(unit1["status"], "in-progress")
+
+    def test_stranded_concept_gets_a_catch_up_session(self):
+        self.rubric_log()
+        self.at(4)
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: catch-up", out)
+        self.assertIn("session: 4r of", out)
+        self.assertIn("teach: beta", out)
+        self.assertIn("the second thing", out)  # the concept's def line
+
+    def test_catch_up_never_advances_and_clears_its_debt(self):
+        self.git_init()
+        self.rubric_log()
+        self.at(4)
+        S.cmd_begin(self.dir)
+        p = self.write_log(f"{TODAY}-4r.md",
+                           log_text("4r", ("beta", "taught", "intro")))
+        S.cmd_close(self.dir, p)
+        self.assertEqual(S.parse_plan(self.dir)[0]["next-session"], "4/10")
+        self.assertEqual(S.parse_plan(self.dir)[1][0]["status"], "taught")
+        self.assertIn("type: standard", S.cmd_begin(self.dir))
+
+    def test_ended_unit_without_a_teach_back_owes_one(self):
+        self.set_record("beta", status="active", next="2026-08-01")
+        self.at(4)
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: catch-up", out)
+        self.assertIn("teach-back: alpha", out)
+
+    def test_any_rubric_grade_settles_the_teach_back(self):
+        self.set_record("beta", status="active", next="2026-08-01")
+        self.rubric_log()
+        self.at(4)
+        self.assertIn("type: standard", S.cmd_begin(self.dir))
+
+    def test_whole_concepts_are_owed_before_teach_backs(self):
+        self.at(4)  # beta untaught AND alpha never teach-backed
+        self.assertIn("teach: beta", S.cmd_begin(self.dir))
+
+
+class TestVariedReview(CourseCase):
+    """Every teaching session used to open with exactly two review items,
+    always the freshest concepts: predictable, and units 1-3 of the live
+    course went unreviewed for six weeks while 19 of 23 concepts sat
+    overdue. Now the shape is drawn per session (deterministically from
+    the token, so two agents agree) and the queue alternates fresh and
+    most-overdue items."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ.pop("ARISTOTLE_REVIEW_PLAN", None)
+
+    def test_a_teach_back_brief_names_its_keystone_and_draws_a_shape(self):
+        self.settle()
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "exit:1"
+        S.write_plan_header(self.dir, {"next-session": "3/10"})
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: teach-back", out)
+        self.assertIn("teach-back: alpha", out)
+        self.assertIn("quiz these (1)", out)
+
+    def test_plan_is_deterministic_per_token(self):
+        self.assertEqual(S.review_plan(self.dir, "17", None),
+                         S.review_plan(self.dir, "17", None))
+
+    def test_plans_vary_and_none_is_occasional(self):
+        shapes = [S.review_plan(self.dir, str(n), None) for n in range(400)]
+        self.assertGreaterEqual(len(set(shapes)), 5)
+        nones = sum(1 for s in shapes if s[0] == "none") / len(shapes)
+        self.assertTrue(0.05 < nones < 0.2, nones)
+        mean = sum(s[1] for s in shapes) / len(shapes)
+        self.assertTrue(1.1 < mean < 1.5, mean)
+
+    def test_none_never_twice_in_a_row(self):
+        for n in range(400):
+            self.assertNotEqual(S.review_plan(self.dir, str(n), "none")[0],
+                                "none")
+
+    def test_brief_states_the_shape_and_queues_that_many(self):
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "exit:1"
+        self.set_record("beta", status="active", next="2026-07-01")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("review: 1 · as an exit ticket", out)
+        self.assertIn("quiz these (1)", out)
+
+    def test_a_none_session_queues_nothing(self):
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "none"
+        out = S.cmd_begin(self.dir)
+        self.assertIn("review: none", out)
+        self.assertIn("quiz these (0)", out)
+
+    def test_the_previous_plan_comes_from_the_last_brief(self):
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "none"
+        S.cmd_begin(self.dir)
+        self.assertEqual(S._previous_review(self.dir), "none")
+
+    def test_queue_alternates_fresh_and_most_overdue(self):
+        self.set_record("alpha", status="active", interval=1,
+                        last="2026-07-20", next="2026-07-21")
+        self.set_record("beta", status="active", interval=7,
+                        last="2026-06-14", next="2026-06-21")  # 30d late
+        self.set_record("gamma", status="active", interval=16,
+                        last="2026-06-30", next="2026-07-16")  # 5d late
+        self.set_record("delta", status="active", interval=1,
+                        last="2026-07-19", next="2026-07-20")
+        q = S.build_queue(self.dir, cap=2, lead="fresh")
+        self.assertEqual(q[0] in ("alpha", "delta"), True)
+        self.assertEqual(q[1], "beta")
+        self.assertEqual(S.build_queue(self.dir, cap=1, lead="backlog"),
+                         ["beta"])
+
+    def test_off_queue_grade_warns_at_close(self):
+        self.git_init()
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "open:1"
+        self.set_record("beta", status="active", next="2026-07-01")
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-2.md"
+        text = draft.read_text(encoding="utf-8").replace(
+            "## grades\n", "## grades\n- grade: alpha | result: pass | "
+            "note: off the brief\n- grade: beta | result: pass | note: ok\n")
+        draft.write_text(text, encoding="utf-8")
+        out = S.cmd_close(self.dir, draft)
+        self.assertIn("warn:", out)
+        self.assertIn("alpha", out.split("warn:")[1])
+
+
+class TestOwedMaterial(CourseCase):
+    """Sessions rightly skip material (`without:`), but 58 such skips in
+    the live course were never repaid — the same omission re-recorded up
+    to seven times. owed.md is the course author's repayment agenda; the
+    brief offers one open item per concept the session touches, and close
+    ticks it only when that concept got a coverage line."""
+
+    def owe(self, *lines):
+        (self.dir / "owed.md").write_text(
+            "# owed\n" + "".join(f"- [ ] {l}\n" for l in lines),
+            encoding="utf-8")
+
+    def test_the_brief_offers_one_item_for_a_queued_concept(self):
+        self.owe("alpha | the second-order case", "alpha | the third case")
+        out = S.cmd_begin(self.dir)  # alpha is due in the fixture
+        self.assertIn("owed: alpha — the second-order case", out)
+        self.assertNotIn("the third case", out)
+
+    def test_close_ticks_an_offered_item_that_got_coverage(self):
+        self.git_init()
+        self.owe("alpha | the second-order case")
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-2.md"
+        text = draft.read_text(encoding="utf-8")
+        text = text.replace("## taught\n",
+                            "## taught\n- alpha: the second-order case\n")
+        text = text.replace("## grades\n",
+                            "## grades\n- grade: alpha | result: pass | note: x\n")
+        draft.write_text(text, encoding="utf-8")
+        S.cmd_close(self.dir, draft)
+        self.assertIn("- [x] alpha", (self.dir / "owed.md").read_text())
+
+    def test_unoffered_items_are_never_ticked(self):
+        self.git_init()
+        self.owe("delta | not offered today")
+        S.cmd_begin(self.dir)
+        p = self.write_log(f"{TODAY}-2.md",
+                           log_text("2", ("beta", "taught", "intro")))
+        S.cmd_close(self.dir, p)
+        self.assertIn("- [ ] delta", (self.dir / "owed.md").read_text())
+
+    def test_owe_validates_the_concept_and_appends(self):
+        S.cmd_owe(self.dir, "beta", "the cost walk")
+        self.assertIn("- [ ] beta | the cost walk",
+                      (self.dir / "owed.md").read_text())
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_owe(self.dir, "nope", "x")
 
 
 class TestUnjustFail(CourseCase):

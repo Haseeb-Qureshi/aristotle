@@ -11,6 +11,11 @@
 #   ./install.sh --check    report drift, change nothing (exit 1 if any)
 #   ./install.sh --all      create the standard targets even if absent
 #   ./install.sh DIR ...    sync to explicit targets
+#   ./install.sh --check-course COURSE_DIR
+#                           report whether a course's engine and session
+#                           procedure match this repo (exit 1 if not). A
+#                           runtime agent once patched a course's own
+#                           schedule.py and no check could see it.
 #
 # Course directories are NOT skill installs: they get the same files at
 # bootstrap and are then owned by the course. Sync one deliberately by
@@ -29,15 +34,32 @@ STANDARD=(
   "$HOME/.claude/skills/aristotle"    # Claude Code
 )
 
-mode="sync"; targets=()
+mode="sync"; targets=(); courses=(); want_course=0
 for a in "$@"; do
+  if [ "$want_course" = 1 ]; then courses+=("$a"); want_course=0; continue; fi
   case "$a" in
+    --check-course) mode="course"; want_course=1 ;;
     --check) mode="check" ;;
     --all)   mode="all" ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *)       targets+=("$a") ;;
   esac
 done
+
+if [ "$mode" = "course" ]; then
+  bad=0
+  for c in "${courses[@]}"; do
+    for f in scripts/schedule.py SKILL.md; do
+      if cmp -s "$SRC/$f" "$c/$f"; then echo "current  ${c/#$HOME/\~}/$f"
+      else echo "DRIFTED  ${c/#$HOME/\~}/$f"; bad=1; fi
+    done
+    for extra in "$c"/scripts/*.py; do
+      [ "$(basename "$extra")" = "schedule.py" ] && continue
+      [ -e "$extra" ] && { echo "EXTRA    ${extra/#$HOME/\~}"; bad=1; }
+    done
+  done
+  exit "$bad"
+fi
 
 if [ ${#targets[@]} -eq 0 ]; then
   for t in "${STANDARD[@]}"; do
