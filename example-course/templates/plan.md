@@ -32,7 +32,8 @@ status: untouched
                 in the map
      ARITHMETIC, enforced by `check`:
        sessions >= len(concepts) + 1     one per concept, plus teach-back
-       sum(sessions) <= course size - 2  leave room to consolidate
+       sum(sessions) <= course size - 1  leave room to consolidate
+                                         (at least one synthesis session)
      Reordering or splitting units is allowed; log the reason. Units are
      never re-entered — interleaved application revisits them.
 -->

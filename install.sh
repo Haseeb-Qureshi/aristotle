@@ -49,9 +49,16 @@ done
 if [ "$mode" = "course" ]; then
   bad=0
   for c in "${courses[@]}"; do
-    for f in scripts/schedule.py SKILL.md; do
+    # everything the session reads from its own course copy
+    for f in scripts/schedule.py SKILL.md checkpoint.md; do
       if cmp -s "$SRC/$f" "$c/$f"; then echo "current  ${c/#$HOME/\~}/$f"
       else echo "DRIFTED  ${c/#$HOME/\~}/$f"; bad=1; fi
+    done
+    for d in templates references; do
+      [ -d "$c/$d" ] || continue
+      if diff -rq "$SRC/$d" "$c/$d" >/dev/null 2>&1; then
+        echo "current  ${c/#$HOME/\~}/$d/"
+      else echo "DRIFTED  ${c/#$HOME/\~}/$d/"; bad=1; fi
     done
     for extra in "$c"/scripts/*.py; do
       [ "$(basename "$extra")" = "schedule.py" ] && continue

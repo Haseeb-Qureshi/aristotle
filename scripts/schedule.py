@@ -22,6 +22,9 @@ The rest are for lifecycle and repair:
   set-verify <id> <mech>      adjudication verdicts
   reprune <ids>               shrink the course coherently
   owe <id> "<material>"       add skipped material to owed.md (authoring)
+  status <state>              set course-status (active|paused|maintenance|
+                              closed); resuming a paused course arms re-entry
+  pointer                     session N/M, status, open question (for jobs)
   commit-grades <logfile>     apply grades only (close does this for you)
 
 State ownership: knowledge-state.md and plan.md's header are written ONLY
@@ -713,7 +716,16 @@ def build_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh",
             and r["id"] not in exclude]
     if terminal:
         # consolidation: ignore due dates, surface the least-evidenced first
-        live.sort(key=lambda r: (-r["fails"], r["interval"]))
+        # most faded first: with fails nearly always 0, sorting by
+        # interval alone handed the final synthesis the newest material
+        t0 = dt.date.fromisoformat(today)
+
+        def faded(r):
+            if r["last"] in ("-", ""):
+                return 0.0
+            return (t0 - dt.date.fromisoformat(r["last"])).days / max(
+                1, r["interval"])
+        live.sort(key=lambda r: (-r["fails"], -faded(r)))
         return [r["id"] for r in live[:cap]]
     due = [r for r in live if r["next"] not in ("-", "") and r["next"] <= today]
     # Alternate two lists. Sorting everything by interval alone meant the
@@ -1250,6 +1262,11 @@ def dispatch(course: Path):
     out = {"index": idx, "size": size, "unit": None, "author": None,
            "cap": TEACHING_CAP, "terminal": False}
 
+    if header["course-status"] == "maintenance":
+        # review-only upkeep after graduation: a non-advancing token
+        out["type"], out["cap"] = "maintenance", QUEUE_CAP
+        out["why"] = "maintenance review — keeping it, not studying it"
+        return out
     if header["course-status"] != "active":
         out["type"] = "lifecycle"
         out["why"] = f"course-status is {header['course-status']}"
@@ -1263,6 +1280,12 @@ def dispatch(course: Path):
         out["why"] = "first session"
         return out
 
+    # an explicit resume beats the gap that caused it: checked first, or
+    # a learner who came back after a fortnight was dormant forever
+    if header["re-entry-pending"] == "yes":
+        out["type"], out["cap"] = "re-entry", QUEUE_CAP
+        out["why"] = "returning after a gap"
+        return out
     last = header["last-attended"]
     if last != "-":
         gap = (_today(course) - dt.date.fromisoformat(last)).days
@@ -1270,10 +1293,6 @@ def dispatch(course: Path):
             out["type"] = "dormant"
             out["why"] = f"{gap} days since the last session"
             return out
-    if header["re-entry-pending"] == "yes":
-        out["type"], out["cap"] = "re-entry", QUEUE_CAP
-        out["why"] = "returning after a gap"
-        return out
     if meta["repair-pending"] != "none":
         out["type"] = "repair"
         out["why"] = f"repair owed on {meta['repair-pending']}"
@@ -1596,6 +1615,78 @@ def owed_items(course: Path):
     return teach + backs
 
 
+def _log_date(path: Path, course: Path) -> str:
+    m = re.match(r"(\d{4}-\d\d-\d\d)-", Path(path).name)
+    return m.group(1) if m else _today(course).isoformat()
+
+
+def _post_commit(course: Path, text: str):
+    """What every path that applies a log's grades must also do: repay
+    the owed items the brief offered, settle ended units' status by
+    content, and refresh the queue. Recovery used to skip all three."""
+    brief = _brief_comment(text)
+    _tick_owed(course, [x for x in brief.get("owed", "-").split(",")
+                        if x != "-"], text)
+    header, units = parse_plan(course)
+    idx = session_index(header)
+    _, records = load_state(course)
+    for u in units:
+        if u.get("num") is None or u["end"] >= idx:
+            continue
+        done = all(records.get(c, {}).get("status") != "untaught"
+                   for c in u["concepts"])
+        status = "taught" if done else "in-progress"
+        if status != u["status"]:
+            write_unit_status(course, u["num"], status)
+    cmd_queue(course)
+
+
+LIFECYCLE = ("active", "paused", "maintenance", "closed")
+
+
+def cmd_status(course: Path, status: str):
+    """Set course-status — the only sanctioned way (checkpoint.md used to
+    say 'set course-status', i.e. hand-edit an engine-owned header).
+    Resuming a paused course arms the gentle re-entry session."""
+    course = Path(course)
+    if status not in LIFECYCLE:
+        raise IntegrityError(f"status must be one of {', '.join(LIFECYCLE)}")
+    header = parse_plan(course)[0]
+    updates = {"course-status": status}
+    if status == "active" and header["course-status"] == "paused":
+        updates["re-entry-pending"] = "yes"
+    write_plan_header(course, updates)
+    _commit(course, f"status: {status}")
+    return f"course-status: {status}"
+
+
+def cmd_pointer(course: Path):
+    """Deterministic orientation for an unattended job: no log parsing by
+    a model (one cron nudge once said 'not recorded' when a draft hid the
+    real open question)."""
+    course = Path(course)
+    header = parse_plan(course)[0]
+    last = _last_log(course)
+    q = last[3] if last else ""
+    return "\n".join([f"session: {header['next-session']}",
+                      f"course-status: {header['course-status']}",
+                      f"open-question: {q or '-'}"])
+
+
+def _asset_section(course: Path, cid: str):
+    """(relpath, first, last) line numbers of a concept's asset section."""
+    for path in sorted((Path(course) / "assets").glob("unit-*.md")):
+        lines = _read(path).splitlines()
+        for i, line in enumerate(lines):
+            if line.strip() == f"## concept: {cid}":
+                end = next((j for j in range(i + 1, len(lines))
+                            if lines[j].startswith("## ")), len(lines))
+                while end > i + 1 and not lines[end - 1].strip():
+                    end -= 1
+                return f"assets/{path.name}", i + 1, end
+    return None
+
+
 def _bank_orphans(course: Path):
     """Apply grades from an unclosed draft that no lock points at — the
     "learner went quiet" path deletes the sentinel, which used to orphan
@@ -1620,8 +1711,9 @@ def _bank_orphans(course: Path):
         header = parse_plan(course)[0]
         write_plan_header(course, {
             "sessions-done": int(header["sessions-done"]) + 1,
-            "last-attended": _today(course).isoformat(),
+            "last-attended": _log_date(path, course),
             "re-entry-pending": "no"})
+        _post_commit(course, text)
         _commit(course, f"recover: banked unclosed session {tok}")
         banked.append(tok)
         meta, _ = load_state(course)
@@ -1668,8 +1760,9 @@ def cmd_recover(course: Path):
                 header = parse_plan(course)[0]
                 write_plan_header(course, {
                     "sessions-done": int(header["sessions-done"]) + 1,
-                    "last-attended": _today(course).isoformat(),
+                    "last-attended": _log_date(logs[-1], course),
                     "re-entry-pending": "no"})
+                _post_commit(course, _read(logs[-1]))
             sentinel.unlink()
             _commit(course, f"recover: replayed session {session}")
             return "replayed"
@@ -1697,7 +1790,7 @@ def _next_token(idx: int, kind: str, committed) -> str:
     token N without advancing the counter, so the slot re-runs as Nb —
     re-issuing N made the re-run's close a silent no-op that threw its
     grades away (live course, sessions 21/24/25/33)."""
-    suffix = "r" if kind in ("repair", "catch-up") else "b"
+    suffix = "r" if kind in ("repair", "catch-up", "maintenance") else "b"
     if suffix == "b" and str(idx) not in committed:
         return str(idx)
     for n in range(1, 50):
@@ -1846,6 +1939,20 @@ def cmd_begin(course: Path):
             state, held = "replayed", banked[-1]
     cmd_check(course)
     d = dispatch(course)
+    if d["type"] in ("graduation", "lifecycle", "dormant"):
+        # no lesson runs: nothing to lock, draft, queue, or close
+        lines = [f"recover: {state}", f"course: {course_label(course)}",
+                 f"type: {d['type']}  ({d['why']})",
+                 "no session to run: do not close; follow checkpoint.md. "
+                 "Change course-status only with `S status <state>`."]
+        if d["type"] == "graduation":
+            _, recs = load_state(course)
+            left = [c for c, r in recs.items() if r["status"] == "untaught"]
+            left += [f"teach-back of {o['concept']}" for o in owed_items(course)
+                     if o["kind"] == "teach-back"]
+            lines.append("left untaught: " + (", ".join(left) or "-"))
+        lines.append(cmd_report(course))
+        return "\n".join(lines)
     meta, _ = load_state(course)
     token = _next_token(d["index"], d["type"], meta["committed-sessions"])
 
@@ -1876,9 +1983,16 @@ def cmd_begin(course: Path):
     ids = cmd_queue(course, cap=d["cap"], terminal=d["terminal"], lead=lead,
                     exclude=main_event)
     _, records = load_state(course)
+    bookend = f"Session {d['index']}"
+    if d["type"] == "catch-up":
+        done_here = sum(1 for tk in meta["committed-sessions"]
+                        if re.fullmatch(rf"{d['index']}r\d*", tk))
+        bookend += (f" · catch-up {done_here + 1} of "
+                    f"{done_here + len(owed_items(course))}")
     lines = [f"recover: {state}",
              f"course: {course_label(course)}",
              f"session: {token} of {d['size']}",
+             f"bookend: {bookend} — open with `<course> · {bookend} —`",
              f"type: {d['type']}  ({d['why']})",
              # the exact filename, so the tutor never computes a date
              # (a UTC-clocked tutor otherwise drifts off the course tz)
@@ -1920,6 +2034,16 @@ def cmd_begin(course: Path):
     if plan:
         lines.append(REVIEW_LINES[plan[0]].format(n=plan[1]))
     lines.append(f"quiz these ({len(ids)}): {', '.join(ids) or '-'}")
+    # read only today's sections, not whole asset files (a catch-up brief
+    # otherwise sent the tutor through ~90k characters before a word)
+    for cid in dict.fromkeys([c for c in (target, d.get("concept")) if c]
+                             + ids):
+        sec = _asset_section(course, cid)
+        if sec:
+            lines.append(f"read: {sec[0]} lines {sec[1]}-{sec[2]} ({cid})")
+    header_now = parse_plan(course)[0]
+    if (int(header_now["sessions-done"]) + 1) % 7 == 0:
+        lines.append("checkpoint: due at this close — read checkpoint.md")
     if d["author"]:
         lines.append(f"author-after-close: {d['author']}")
 
@@ -2089,6 +2213,20 @@ def cmd_close(course: Path, logfile: Path):
                 f"the live session is {held!r} but this log says {session!r} "
                 "— refusing to close someone else's session")
 
+    # a teach-back is settled only by a rubric grade; anything else would
+    # leave it owed and re-dispatch it forever, so the live tutor fixes the
+    # log now (recovery paths stay lenient: losing evidence is worse)
+    try:
+        results = {g["id"]: g["result"] for g in parse_log_grades(text)[1]}
+    except (FormatError, IntegrityError):
+        results = {}
+    for k in [x for x in brief.get("back", "-").split(",") if x != "-"]:
+        if k in results and not results[k].startswith("rubric"):
+            raise IntegrityError(
+                f"log error: this session was a teach-back of {k}, graded "
+                f"{results[k]!r} — a teach-back is graded rubric-pass or "
+                "rubric-fail against its ## rubric block. Fix the grade line "
+                "and close again.")
     applied = cmd_commit_grades(course, logfile)
     if applied == "applied":
         _tick_owed(course, [x for x in brief.get("owed", "-").split(",")
@@ -2106,7 +2244,10 @@ def cmd_close(course: Path, logfile: Path):
     # it unless it still points at this token's slot — a close that
     # crashed after advancing must not skip a slot when re-run
     slot = int(re.match(r"\d+", session).group(0))
-    advanced = (not session.rstrip("0123456789").endswith("r")
+    # only a close that applied its grades finishes a slot: re-closing a
+    # log recovery already replayed must not skip the slot's re-run
+    advanced = (applied == "applied"
+                and not session.rstrip("0123456789").endswith("r")
                 and idx == slot)
     if advanced:
         updates["next-session"] = f"{idx + 1}/{course_size(header)}"
@@ -2157,6 +2298,9 @@ def main(argv=None):
     p = sub.add_parser("seed")
     p.add_argument("id")
     p.add_argument("evidence", choices=sorted(SEED_INTERVAL))
+    p = sub.add_parser("status")
+    p.add_argument("state", choices=LIFECYCLE)
+    sub.add_parser("pointer")
     p = sub.add_parser("owe")
     p.add_argument("id")
     p.add_argument("material")
@@ -2186,6 +2330,10 @@ def main(argv=None):
             cmd_seed(course, a.id, a.evidence)
         elif a.cmd == "commit-grades":
             print(cmd_commit_grades(course, Path(a.logfile)))
+        elif a.cmd == "status":
+            print(cmd_status(course, a.state))
+        elif a.cmd == "pointer":
+            print(cmd_pointer(course))
         elif a.cmd == "owe":
             cmd_owe(course, a.id, a.material)
         elif a.cmd == "set-verify":

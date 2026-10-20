@@ -66,7 +66,7 @@ Then set `next-session: <n>/<new total>` and remove emptied units.
 ## Dormant (`type: dormant` — about a fortnight of silence)
 
 A busy fortnight is not a churn signal, and pinging an engaged person is
-how you lose them. Set `course-status: paused`, commit, and send **one**
+how you lose them. Run `S status paused` and send **one**
 message that offers a smaller door and asks nothing hard:
 
 > "Your spot's held — everything you've learned is exactly where you left
@@ -76,10 +76,10 @@ message that offers a smaller door and asks nothing hard:
 While paused, at most one message a fortnight. Never lead with a content
 question: a quiz about a half-forgotten idea confirms the avoidance.
 
-**On resume:** set `course-status: active`, `re-entry-pending: yes`,
-commit. `begin` handles the rest.
+**On resume:** run `S status active` — it also arms the gentle
+re-entry session. `begin` handles the rest.
 
-**On an explicit quit:** `course-status: closed`, and write a graceful
+**On an explicit quit:** `S status closed`, and write a graceful
 exit report — what they actually learned, what's still fragile, what it
 would take to pick it up. Closing is a recorded outcome, not a failure.
 
@@ -103,6 +103,7 @@ Fires when the counter is exhausted, whatever is left untaught.
 > "That's the course. Want me to keep it alive? One short review every
 > couple of weeks and this stays yours instead of fading by Christmas."
 
-If yes: `course-status: maintenance`, and run review-only sessions off
-the queue — weekly until everything has cleared the 35-day interval,
-fortnightly after. If no: `course-status: closed`.
+If yes: `S status maintenance`, and run review-only sessions off
+the queue (`begin` dispatches them as `maintenance`, never advancing
+the counter) — weekly until everything has cleared the 35-day interval,
+fortnightly after. If no: `S status closed`.

@@ -17,7 +17,7 @@ Let `$C` = the course directory. `S = python3 $C/scripts/schedule.py --course $C
 S begin
 ```
 
-It recovers from any crash, locks the session, validates the course, decides the session type, creates today's log draft, and prints your brief: the session token and type, the `log file:`, the unit and its assets, `untaught here`, the `teach:` or `teach-back:` target, the `review:` shape, `quiz these`, the last session and its `open question`, `asked recently`, `bank items used`, the `presented` record for each queued concept, `banks spendable`, any `owed:` items, and any `NOTE:`. Every line is an instruction; follow it, including a NOTE.
+It recovers from any crash, locks the session, validates the course, decides the session type, creates today's log draft, and prints your brief: the session token and type, the `bookend:` label, the `log file:`, the unit and its assets, `untaught here`, the `teach:` or `teach-back:` target, the `review:` shape, `quiz these`, the last session and its `open question`, `asked recently`, `bank items used`, the `presented` record for each queued concept, `banks spendable`, any `owed:` items, `read:` pointers, a `checkpoint:` line when one is due, and any `NOTE:`. Every line is an instruction; follow it, including a NOTE.
 
 If it errors, **stop and send the user nothing** — a broken course is an operator problem. Fix it only if it is an asset file you wrote. **One exception:** if the error says a session is already live and that lock is *yours* (you ran `begin` earlier in this conversation and were interrupted), nothing is broken: read the draft log, keep teaching from where it says you were, and close as normal. Never run `begin` twice in one session.
 
@@ -25,13 +25,13 @@ If it errors, **stop and send the user nothing** — a broken course is an opera
 
 **Your memory is not the record.** A chat thread that persists across days holds teasers and openers nobody answered; none of that was taught. `untaught here` and `presented` are the only truth about coverage.
 
-Then read the unit's `assets/` file, its `sources/` notes, and `knowledge-state.md` — the `note:` column holds what they got wrong last time.
+Then read exactly the asset sections on the `read:` lines (not whole files), the unit's `sources/` notes for today's teach target only, and the `note:` column of `knowledge-state.md` for today's concepts — it holds what they got wrong last time.
 
 ## 2. The shape of every session
 
 **Open with a payoff, not a quiz.** For something new, pose the question in plain words you build yourself and ask them to guess before you explain. Never spend a bank quiz item on an untaught concept (its key assumes vocabulary you haven't introduced), and answer a guess by *teaching* ("close — HBM is one; the other I haven't shown you yet"), never by scoring. A pre-instruction miss is material, not evidence: the first grade an untaught concept can earn is `taught`.
 
-**Bookend the session.** Begin your first message with `<course> · Session N —` (the `course:` line) and the goodnight with `Next time (<course>):`. Exactly one of each, plain, no ids or tokens. The course label keeps this working when several courses share one chat.
+**Bookend the session.** Begin your first message with `<course> · <bookend> —` (the `course:` and `bookend:` lines) and the goodnight with `Next time (<course>):`. Exactly one of each, plain, no ids or tokens. The course label keeps this working when several courses share one chat.
 
 **Write the log as you go.** Append to the draft named on the `log file:` line, never a file you name yourself: each question to `## asked` as you pose it, a coverage line to `## taught` only *after* the learner has seen that material, each grade to `## grades` when the evidence lands. After any gap in your context, read the draft before you say another word.
 
@@ -68,9 +68,11 @@ Then read the unit's `assets/` file, its `sources/` notes, and `knowledge-state.
 
 **re-entry** — back after a gap. No new material, no backlog framing. Re-anchor why they started, then retrieval whose first item is their strongest concept.
 
-**placement** → `bootstrap.md`. **lifecycle / dormant / graduation** → `checkpoint.md`. If `sessions-done` is a positive multiple of 7, also read `checkpoint.md` and append the checkpoint to the close.
+**maintenance** — after graduation: review-only upkeep off the queue, built fresh; the counter does not move.
 
-**Pictures are optional aids.** If the concept you teach has a `- visual:` line in its asset section, send the image once, after your prose has taught the idea completely: `MEDIA:$C/visuals/<id>/teach.png` (absolute path) on its own line, and add its `presents:` facts to that concept's coverage line. Never ask anything only the picture can answer, and never show it while a question on that concept is open (it shows answers). A concept taught before its picture existed gets it when you correct a missed retrieval, or in a repair. In retrieval you MAY send `recall.png` with the line's `recall:` question, once per concept per course.
+**placement** → `bootstrap.md`. **lifecycle / dormant / graduation** → `checkpoint.md`; `begin` runs no session for these (nothing to close). When the brief prints `checkpoint:`, read `checkpoint.md` and append the checkpoint to the close.
+
+**Pictures are optional aids.** If the concept you teach has a `- visual:` line in its asset section, send `$C/visuals/<id>/teach.png` once, after your prose has taught the idea completely (on Hermes: `MEDIA:<absolute path>` on its own line), and add its `presents:` facts to that concept's coverage line. Never ask anything only the picture can answer, and never show it while a question on that concept is open (it shows answers). A concept taught before its picture existed gets it when you correct a missed retrieval, or in a repair. In retrieval you MAY send `recall.png` with the line's `recall:` question, once per concept per course.
 
 ## 4. Close
 

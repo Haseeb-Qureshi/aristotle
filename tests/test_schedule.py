@@ -2208,15 +2208,18 @@ class TestSecondReview(CourseCase):
         self.at(4)
         self.assertNotIn("catch-up", S.cmd_begin(self.dir))
 
-    def test_a_briefed_teach_back_without_a_rubric_grade_warns(self):
+    def test_a_briefed_teach_back_left_ungraded_warns(self):
+        """A wrong grade is refused (TestThirdReview); a teach-back that
+        never got graded at all still closes, with a warning."""
         self.git_init()
-        self.set_record("beta", status="active", next="2026-08-30")
+        self.set_record("beta", status="active", next="2026-07-01")
         self.at(4)
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "open:1"
         S.cmd_begin(self.dir)
         p = self.dir / "log" / f"{TODAY}-4r.md"   # keep begin's brief
         p.write_text(p.read_text(encoding="utf-8").replace(
-            "## grades\n", "## grades\n- grade: alpha | result: pass | "
-            "note: not a rubric\n"), encoding="utf-8")
+            "## grades\n", "## grades\n- grade: beta | result: pass | "
+            "note: review only\n"), encoding="utf-8")
         out = S.cmd_close(self.dir, p)
         self.assertIn("teach-back", out.split("warn:", 1)[-1])
 
@@ -2319,6 +2322,141 @@ class TestSecondReview(CourseCase):
         (self.dir / "plan.md").write_text(REVIEW_PLAN_MD, encoding="utf-8")
         self.settle("alpha")
         self.assertNotIn("banks spendable", S.cmd_begin(self.dir))
+
+
+class TestThirdReview(CourseCase):
+    """Findings of the fresh 2026-10-20 review, pinned."""
+
+    def stale(self, token):
+        p = self.dir / S.SENTINEL
+        p.write_text(f"session: {token}\n", encoding="utf-8")
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+
+    def at(self, n):
+        S.write_plan_header(self.dir, {"next-session": f"{n}/10"})
+
+    def hdr(self):
+        return S.parse_plan(self.dir)[0]
+
+    # 1. blocker: a briefed teach-back must be graded with a rubric result
+    def test_close_refuses_a_non_rubric_grade_on_a_briefed_teach_back(self):
+        self.git_init()
+        self.set_record("beta", status="active", next="2026-08-30")
+        self.at(4)
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-4r.md"
+        draft.write_text(draft.read_text(encoding="utf-8").replace(
+            "## grades\n", "## grades\n- grade: alpha | result: pass | "
+            "note: x\n"), encoding="utf-8")
+        with self.assertRaises(S.IntegrityError) as cm:
+            S.cmd_close(self.dir, draft)
+        self.assertIn("rubric", str(cm.exception))
+        self.assertEqual(self.rec("alpha")["interval"], 1)  # nothing applied
+
+    # 4. closing an already-replayed log never skips the re-run slot
+    def test_closing_a_replayed_log_does_not_advance(self):
+        self.git_init()
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-2.md"
+        draft.write_text(draft.read_text(encoding="utf-8").replace(
+            "## grades\n", "## grades\n- grade: alpha | result: pass | "
+            "note: x\n"), encoding="utf-8")
+        self.stale("2")
+        self.assertEqual(S.cmd_recover(self.dir), "replayed")
+        S.cmd_close(self.dir, draft)
+        self.assertEqual(self.hdr()["next-session"], "2/10")
+
+    # 5. recovery paths repay owed items and refresh status like close
+    def test_banked_draft_ticks_its_owed_item(self):
+        self.git_init()
+        (self.dir / "owed.md").write_text("- [ ] alpha | the case\n",
+                                          encoding="utf-8")
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-2.md"
+        draft.write_text(draft.read_text(encoding="utf-8").replace(
+            "## taught\n", "## taught\n- alpha: owed: the case\n").replace(
+            "## grades\n", "## grades\n- grade: alpha | result: pass | "
+            "note: x\n"), encoding="utf-8")
+        (self.dir / S.SENTINEL).unlink()
+        S.cmd_begin(self.dir)
+        self.assertIn("- [x] alpha", (self.dir / "owed.md").read_text())
+
+    # 13. a replayed session is dated by its log, not the recovery day
+    def test_replay_dates_attendance_by_the_log(self):
+        self.git_init()
+        self.write_log("2026-07-19-2.md",
+                       log_text("2", ("alpha", "pass", "x")))
+        self.stale("2")
+        S.cmd_recover(self.dir)
+        self.assertEqual(self.hdr()["last-attended"], "2026-07-19")
+
+    # 2/3. lifecycle has engine paths
+    def test_re_entry_wins_over_a_dormant_gap(self):
+        S.write_plan_header(self.dir, {"last-attended": "2026-06-01",
+                                       "re-entry-pending": "yes"})
+        self.assertEqual(S.dispatch(self.dir)["type"], "re-entry")
+
+    def test_status_verb_resumes_with_re_entry(self):
+        self.git_init()
+        S.cmd_status(self.dir, "paused")
+        self.assertEqual(self.hdr()["course-status"], "paused")
+        S.cmd_status(self.dir, "active")
+        self.assertEqual(self.hdr()["course-status"], "active")
+        self.assertEqual(self.hdr()["re-entry-pending"], "yes")
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_status(self.dir, "bogus")
+
+    def test_graduation_begin_neither_locks_nor_queues(self):
+        self.git_init()
+        self.at(11)
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: graduation", out)
+        self.assertNotIn("quiz these", out)
+        self.assertFalse((self.dir / S.SENTINEL).exists())
+        self.assertIn("left untaught", out)      # named, not hidden
+
+    def test_maintenance_runs_non_advancing_review(self):
+        self.git_init()
+        S.write_plan_header(self.dir, {"course-status": "maintenance",
+                                       "next-session": "11/10"})
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: maintenance", out)
+        self.assertIn("session: 11r of", out)
+
+    # 7. the final synthesis reviews what has faded, not what is fresh
+    def test_terminal_queue_prefers_the_most_faded(self):
+        self.set_record("alpha", status="active", interval=1,
+                        last="2026-07-20", next="2026-07-21")
+        self.set_record("beta", status="active", interval=7,
+                        last="2026-05-01", next="2026-05-08")
+        q = S.build_queue(self.dir, cap=1, terminal=True)
+        self.assertEqual(q, ["beta"])
+
+    # 8. catch-ups say where they are in the run
+    def test_catch_up_brief_carries_a_bookend_label(self):
+        self.at(4)   # beta untaught + alpha never teach-backed: 2 owed
+        out = S.cmd_begin(self.dir)
+        self.assertIn("bookend: Session 4 · catch-up 1 of 2", out)
+
+    # 9. the checkpoint is surfaced, not left to arithmetic
+    def test_checkpoint_due_is_printed(self):
+        S.write_plan_header(self.dir, {"sessions-done": "6"})
+        self.assertIn("checkpoint: due at this close", S.cmd_begin(self.dir))
+
+    # 10. the brief points at the sections to read, not whole files
+    def test_brief_names_asset_sections_to_read(self):
+        out = S.cmd_begin(self.dir)
+        self.assertRegex(out, r"read: assets/unit-01\.md lines \d+-\d+ "
+                              r"\(beta\)")
+
+    # 12. a deterministic pointer for the cron
+    def test_pointer_prints_session_and_open_question(self):
+        self.write_log("2026-07-20-1.md",
+                       log_text("1", ("alpha", "pass", "x"), extra="why?"))
+        out = S.cmd_pointer(self.dir)
+        self.assertIn("session: 2/10", out)
+        self.assertIn("open-question: why?", out)
 
 
 class TestUnjustFail(CourseCase):
