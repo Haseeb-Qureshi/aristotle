@@ -7,6 +7,7 @@ a change that alters what a learner experiences must fail something.
 
 import datetime as dt
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -2670,6 +2671,39 @@ class TestVisualWarnings(CourseCase):
         (d / "teach.png").write_bytes(b"png")
         w = " | ".join(S.course_warnings(self.dir))
         self.assertNotIn("u01-alpha-shape", w)
+
+    def render(self, *ids):
+        for vid in ids:
+            d = self.dir / "visuals" / vid
+            d.mkdir(parents=True)
+            (d / "teach.png").write_bytes(b"png")
+
+    def add_visuals_everywhere(self):
+        p = self.dir / "assets" / "unit-01.md"
+        text = p.read_text(encoding="utf-8")
+        for cid in ("alpha", "beta"):
+            text = text.replace(
+                f"## concept: {cid}",
+                f"## concept: {cid}\n- visual: u01-{cid}-shape | presents: a",
+                1)
+        p.write_text(text, encoding="utf-8")
+
+    def test_brief_names_the_taught_concepts_picture(self):
+        """A tutor left to spot `- visual:` inside the asset text taught
+        a concept and never sent its picture (session 34r, 2026-10-25):
+        the brief says it outright."""
+        self.add_visuals_everywhere()
+        self.render("u01-alpha-shape", "u01-beta-shape")
+        out = S.cmd_begin(self.dir)
+        target = re.search(r"^teach: (\S+)", out, re.M).group(1)
+        other = "beta" if target == "alpha" else "alpha"
+        self.assertIn(f"picture: visuals/u01-{target}-shape/teach.png", out)
+        self.assertNotIn(f"u01-{other}-shape", out)
+
+    def test_an_unrendered_picture_is_not_offered(self):
+        self.add_visuals_everywhere()
+        out = S.cmd_begin(self.dir)
+        self.assertNotIn("picture:", out)
 
 
 class TestCourseWarnings(CourseCase):

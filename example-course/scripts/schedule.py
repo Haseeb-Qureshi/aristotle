@@ -2144,6 +2144,18 @@ def cmd_begin(course: Path):
         if target and not backs:
             dfn = parse_map(course).get(target, {}).get("def", "")
             lines.append(f"teach: {target}" + (f" — {dfn}" if dfn else ""))
+            # a picture left for the tutor to spot inside the asset text
+            # went unsent (session 34r, 2026-10-25) — name it outright
+            unit_path = Path(course) / f"assets/unit-{u['num']:02d}.md"
+            if unit_path.exists():
+                sec = parse_assets(_read(unit_path))["concepts"].get(target)
+                for vid in (sec or {}).get("visual", []):
+                    if (Path(course) / "visuals" / vid / "teach.png").exists():
+                        lines.append(
+                            f"picture: visuals/{vid}/teach.png — send once, "
+                            "after your prose has taught it and with no "
+                            f"question open; log its presents: facts on "
+                            f"{target}'s coverage line")
         if u["artifact"] and u["artifact"] != "none":
             lines.append(f"artifact-milestone: {u['artifact']}")
     if plan:

@@ -72,7 +72,7 @@ Then read exactly the asset sections on the `read:` lines (not whole files), the
 
 **placement** → `bootstrap.md`. **lifecycle / dormant / graduation** → `checkpoint.md`; `begin` runs no session for these (nothing to close). When the brief prints `checkpoint:`, read `checkpoint.md` and append the checkpoint to the close.
 
-**Pictures are optional aids.** If the concept you teach has a `- visual:` line in its asset section, send `$C/visuals/<id>/teach.png` once, after your prose has taught the idea completely (on Hermes: `MEDIA:<absolute path>` on its own line), and add its `presents:` facts to that concept's coverage line. Never ask anything only the picture can answer, and never show it while a question on that concept is open (it shows answers). A concept taught before its picture existed gets it when you correct a missed retrieval, or in a repair. In retrieval you MAY send `recall.png` with the line's `recall:` question, once per concept per course.
+**Pictures are optional aids.** If the concept you teach has a `- visual:` line in its asset section (the brief names it on a `picture:` line), send `$C/visuals/<id>/teach.png` once, after your prose has taught the idea completely (on Hermes: `MEDIA:<absolute path>` on its own line), and add its `presents:` facts to that concept's coverage line. Never ask anything only the picture can answer, and never show it while a question on that concept is open (it shows answers). A concept taught before its picture existed gets it when you correct a missed retrieval, or in a repair. In retrieval you MAY send `recall.png` with the line's `recall:` question, once per concept per course.
 
 ## 4. Close
 
