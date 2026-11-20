@@ -124,10 +124,10 @@ Then work, in order:
    **A minority, always.** Roughly a quarter of the course, never more
    than a third; the same restraint applies to `keystones:` in
    `plan.md` (one or two per unit — a keystone is what the unit's
-   teach-back is *about*). A clean-room run tagged every concept as
+   case study is graded *on*). A clean-room run tagged every concept as
    both, which is the same as tagging none: if everything is
    transformative, nothing gets the extra time, and every unit's
-   teach-back tries to cover the whole unit in twelve minutes.
+   case study tries to cover the whole unit at once.
 5. **Sequence** within the dependency graph's slack. The graph says
    what's *valid*; craft picks which valid order:
    - the thing they came for goes early — motivation beats logical
@@ -136,29 +136,53 @@ Then work, in order:
    - put confusable pairs adjacent so they get contrasted, not blurred
    - **frame every unit as a question**, never a topic
 6. **Do the arithmetic, or the course won't fit.** Each unit needs
-   `len(concepts) + 1` sessions — one per concept at one new concept per
-   session, plus the teach-back — and **no more**: a unit padded past its
-   material forces the extra sessions to manufacture recall, which is
-   how a course ends up re-asking its own questions. The same sum governs
-   any later plan edit: a unit's last slot is its teach-back, so moving or
-   absorbing a slot must leave `len(concepts)` teaching slots, or a
-   concept is silently dropped (it happened: unit 4 of the AI-economics
-   course lost `neocloud-model` to a repair that forgot the teach-back
-   slot). The engine now catches what slips through — an ended unit's
-   untaught concepts and missing teach-backs become catch-up sessions —
-   but that is recovery, not design. Then distribute the review, don't
-   stack it at the end:
+   `len(concepts) + 1` sessions — one lesson per concept at one new
+   concept per session, plus the unit's case study — and **no more**: a
+   unit padded past its material forces the extra sessions to
+   manufacture recall, which is how a course ends up re-asking its own
+   questions. The same sum governs any later plan edit: a unit's last
+   slot is its case study, so moving or absorbing a slot must leave
+   `len(concepts)` teaching slots, or a concept is silently dropped (it
+   happened: unit 4 of the AI-economics course lost `neocloud-model` to
+   a repair that forgot the unit-end slot). The engine now catches what
+   slips through — an ended unit's untaught concepts become catch-up
+   sessions — but that is recovery, not design. Then distribute the
+   review, don't stack it at the end:
    - after every 2–3 units, insert a `## Review: <title>` block
-     (`sessions: N`, no concepts, no assets) — mixed retrieval reaching
-     back across *all* prior units, run per SKILL.md's `review` type
+     (`sessions: N`, no concepts, no assets) — one case study that puts
+     *all* prior units to work, run per SKILL.md's `review` type
    - leave **at least one session** at the very end unclaimed: the
      terminal synthesis (artifact-centered), not a second recall block —
      two adjacent review sessions over the same material are not spaced,
      they are the same session twice
    `check` enforces the floor and the fit; if it doesn't fit, cut
    concepts, not sessions.
-7. **Author assets for ALL units now** per `templates/assets-unit.md` —
-   the author/tutor asymmetry: the agent bootstrapping a course is
+7. **Write the lessons — this is the course.** One file per session
+   that teaches, per `templates/lesson.md`: `lessons/<concept-id>.md`
+   for every concept, `lessons/unit-NN-case.md` for every unit's last
+   session, `lessons/review-NN.md` for each review block (NN = the unit
+   before it), and `lessons/final.md`. Each is the material itself,
+   written out in full: 900-1,400 words in 5-8 sections that build one
+   idea, with real numbers and named cases from `sources/`, and a fair
+   question after each section that opens the next.
+
+   Everything downstream is delivery. The tutor teaches a lesson file
+   section by section; a tutor handed a paragraph teaches a paragraph.
+   The first course built on this engine wrote a three-to-six-item quiz
+   bank and a single "worked example" paragraph per concept, and its
+   learner's verdict after 39 sessions was "too much quizzing and not
+   enough teaching" — while an older course of plain, literal lesson
+   files, taught by a ten-line instruction, was the one he praised
+   (`audits/lesson-first/`). Spend the design studio's time here.
+
+   Read each lesson once as the learner, on a phone, with five minutes:
+   does every section tell you something specific you did not know,
+   and can you answer each Ask from what came before it?
+
+7b. **Then author assets for ALL units** per `templates/assets-unit.md` —
+   a small bank for later callbacks (two or three quiz items a
+   concept), the keystone rubrics, and the misconceptions, all drawn
+   from what the lessons actually teach. The author/tutor asymmetry: the agent bootstrapping a course is
    usually running with more context, more sources, and often a
    stronger model than the agent that will teach session 23 on a
    Tuesday. Compile once, execute many: the more judgment you pre-bake
@@ -177,7 +201,7 @@ Then work, in order:
    concept. A key that demands specific case evidence (a company, a
    number, an event) is fair only if the stem supplies that evidence or
    the teaching session actually presented it, and from here you cannot
-   know which cases a twelve-minute session will fit in. **Prefer stems
+   know which sections a session will have reached. **Prefer stems
    that carry their own case.** Where a key still demands outside
    facts, name them:
 
@@ -231,7 +255,7 @@ a course without it has a dangling instruction), and write a
 course/
   README.md  domain-map.md  plan.md  knowledge-state.md
   history.md  review-queue.md  .gitignore
-  log/  assets/  sources/  artifact/
+  lessons/  log/  assets/  sources/  artifact/
   scripts/  templates/  references/  SKILL.md  checkpoint.md
 ```
 
@@ -290,8 +314,8 @@ repo if it isn't one).
 there's a session 2.
 
 1. **Teach one striking idea** from the terminal task — the single most
-   interesting thing in the whole course. They came for this; give it to
-   them in the first five minutes.
+   interesting thing in the whole course, as a full lesson from its
+   lesson file. They came for this.
 2. **Then a short placement probe**, framed as orientation: *"Let me find
    your starting line so I don't waste your time on what you've got."*
    Three to five questions, not a battery.

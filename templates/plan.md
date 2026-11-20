@@ -27,11 +27,11 @@ sources: [unit-01-a]
 status: untouched
 
 <!-- status     untouched | in-progress | taught   (set by `S close`)
-     keystones  the 1-2 concepts teach-back examines; each must be one of
+     keystones  the 1-2 concepts the unit's case study is graded on; each must be one of
                 this unit's own concepts, and each needs a misconception
                 in the map
      ARITHMETIC, enforced by `check`:
-       sessions >= len(concepts) + 1     one per concept, plus teach-back
+       sessions >= len(concepts) + 1     one per concept, plus the case study
        sum(sessions) <= course size - 1  leave room to consolidate
                                          (at least one synthesis session)
      Reordering or splitting units is allowed; log the reason. Units are

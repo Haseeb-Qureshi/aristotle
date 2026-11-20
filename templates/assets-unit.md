@@ -1,6 +1,9 @@
-<!-- FORMAT — assets/unit-NN.md: the pre-authored teaching material for
-     one unit. Runtime ADAPTS these; it never improvises an evidence
-     standard. `schedule.py check` validates this file, and empty or
+<!-- FORMAT — assets/unit-NN.md: one unit's question bank, rubrics and
+     pictures. The TEACHING lives in lessons/ (templates/lesson.md): a
+     session teaches the lesson file and uses this bank only for
+     callbacks in later sessions and for grading a case study. Draw
+     every item from what the lessons actually teach. Runtime ADAPTS
+     these; it never improvises an evidence standard. `schedule.py check` validates this file, and empty or
      placeholder values FAIL — authoring it lazily wedges the course.
 
      Required, per unit:
@@ -42,7 +45,7 @@
 ## concept: concept-id
 - quiz: <question, cold-retrievable in one line> | a: <expected answer> | distractor: M1
 - quiz: <a case-judgment item if this concept's terminal use is judgment rather than recall> | a: <key> | distractor: M2 | requires: <case facts the key demands beyond the stem>
-- example: worked | <fully worked example, shown at first teaching>
+- example: worked | <one fully worked example; the lesson file carries the full teaching>
 - apply: <application prompt; required for verify:use concepts>
 - visual: <id> | presents: <facts the image states> | recall: <question for recall.png, answerable without it>
 

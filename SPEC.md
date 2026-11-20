@@ -13,6 +13,10 @@
 > **The executable spec is `SKILL.md`, `bootstrap.md`, `checkpoint.md`,
 > `templates/`, `tests/test_schedule.py`, and `example-course/`.**
 > See `CRITIQUE-R3.md` for what changed and why.
+>
+> Its first design goal (retention, served by quizzing) was reordered in
+> 2026-11: a session is now a lesson taught in full from a written file,
+> and retrieval serves it. See `audits/lesson-first/PROPOSAL.md`.
 
 # Tutor — Consolidated Spec (v2.1)
 

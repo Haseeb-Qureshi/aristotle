@@ -3,8 +3,10 @@
 *Alexander had Aristotle. You have a phone.*
 
 A chat-based AI tutor that teaches you one topic over a finite course of
-short, scheduled sessions — designed for **long-term retention first**,
-completion second, coverage third. The agent is stateless; the entire
+scheduled lessons — designed for **understanding first** (every lesson is
+taught in full, from written course material), retention second (what
+was taught comes back where a later lesson builds on it), completion
+third. The agent is stateless; the entire
 course lives in one human-readable markdown directory you can read, edit,
 git-push, and resurrect on any machine, any platform, any model.
 
@@ -37,13 +39,23 @@ files at bootstrap and own them afterwards.
 - **Map, plan, session.** A one-time bootstrap interviews you (~5 taps),
   researches the domain if it's a moving target, and writes a frozen
   concept graph (`domain-map.md`), a mutable syllabus (`plan.md`), and
-  pre-authored teaching assets — quiz keys, teach-back rubrics, worked
-  examples, misconception distractors. Sessions are generated from those.
+  the course itself: one fully written lesson per session
+  (`lessons/`, 900-1,400 words of mechanism, numbers and named cases),
+  plus a small question bank, case-study rubrics and misconception
+  notes. A session is that lesson, delivered a section at a time.
+- **Teach, then ask.** Every tutor turn answers what the learner said,
+  teaches the next section, and ends on one question the lesson has
+  already made answerable. No quiz at the open, no exit ticket; up to
+  two earlier concepts come back as callbacks, only where the day's
+  lesson stands on them. A lesson interrupted part-way resumes at the
+  next section. Each unit ends on a case study, not an exam. (The first
+  version did the opposite, and its learner said so after 39 sessions:
+  [`audits/lesson-first`](audits/lesson-first/PROPOSAL.md).)
 - **Forward motion is unconditional; verification is advisory.** The
-  course advances on a session counter, never blocked by mastery. Weak
-  concepts persist in a capped spaced-review queue (1/3/7/16/35/90/180
-  days) until evidenced, and the last sessions consolidate the weakest
-  material regardless of what's due.
+  course advances on a session counter, never blocked by mastery.
+  Concepts carry a spaced interval (1/3/7/16/35/90/180 days) that moves
+  only on the learner's own later answers; due ones are offered to
+  lessons and case studies as callbacks.
 - **Two commands per session.** `begin` recovers, locks, validates,
   decides the session type and builds the queue; `close` applies grades,
   advances the plan, and commits. Everything deterministic lives in
