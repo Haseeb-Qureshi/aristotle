@@ -1748,10 +1748,21 @@ def cmd_pointer(course: Path):
         kind = dispatch(course)["type"]
     except (FormatError, IntegrityError):
         kind = "?"
-    return "\n".join([f"session: {header['next-session']}",
-                      f"course-status: {header['course-status']}",
-                      f"type: {kind}",
-                      f"open-question: {q or '-'}"])
+    lines = [f"session: {header['next-session']}",
+             f"course-status: {header['course-status']}",
+             f"type: {kind}",
+             f"open-question: {q or '-'}"]
+    try:
+        d = dispatch(course)
+        key = _lesson_key(course, d, _teach_target(course, d))
+        done = [s for _, secs in _lesson_progress(course, key) for s in secs]
+    except (FormatError, IntegrityError, KeyError):
+        done = []
+    if done:
+        # the nudge should invite them back INTO the lesson, not past it
+        lines.append(f"in-progress: {key} — {len(done)} section(s) "
+                     f"delivered, last: {done[-1]}")
+    return "\n".join(lines)
 
 
 def _asset_section(course: Path, cid: str, kind: str = "concept",
@@ -1796,7 +1807,9 @@ def _bank_orphans(course: Path):
                                  as_of=_log_date(path, course)) != "applied":
                 continue
         except (FormatError, IntegrityError):
-            continue   # no grades: a declined session, nothing to bank
+            # no grades: declined, or a lesson paused part-way
+            _note_attendance(course, path)
+            continue
         header = parse_plan(course)[0]
         write_plan_header(course, {
             "sessions-done": int(header["sessions-done"]) + 1,
@@ -1887,15 +1900,15 @@ def cmd_recover(course: Path):
     for rel in untracked:
         path = course / rel
         body = _read(path) if path.is_file() else ""
-        if not any(_section(body, h).strip() for h in
-                   (TAUGHT_HEAD_RE, ASKED_HEAD_RE,
-                    re.compile(r"^##+\s*grades\s*$", re.M | re.I))):
+        if not _holds_something(body):
             path.unlink()
     for f in (BRIEF_FILE,):
         if (course / f).exists():
             (course / f).unlink()
     if sentinel.exists():
         sentinel.unlink()
+    if logs and logs[-1].is_file():
+        _note_attendance(course, logs[-1])
     return "reset"
 
 
@@ -1925,6 +1938,84 @@ def _lesson_key(course: Path, d: dict, target):
                   and u["end"] < d["index"]]
         return f"review-{before[-1]:02d}" if before else None
     return None
+
+
+PROGRESS_HEAD_RE = re.compile(r"^##+\s*progress\s*$", re.M | re.I)
+GRADES_HEAD_RE = re.compile(r"^##+\s*grades\s*$", re.M | re.I)
+CLOSED_STAMP = "<!-- closed -->"
+
+
+def _progress_items(text: str):
+    """Lesson sections a draft records as delivered ('## progress')."""
+    return [ln.strip()[2:].strip()
+            for ln in _section(text, PROGRESS_HEAD_RE).splitlines()
+            if ln.strip().startswith("- ") and ln.strip()[2:].strip()]
+
+
+def _holds_something(text: str) -> bool:
+    """A draft is debris only if nothing was taught, asked, graded or
+    delivered in it."""
+    return any(_section(text, h).strip() for h in
+               (TAUGHT_HEAD_RE, ASKED_HEAD_RE, GRADES_HEAD_RE,
+                PROGRESS_HEAD_RE))
+
+
+def _lesson_progress(course: Path, key):
+    """[(date, [sections])] for sittings of lesson `key` that never
+    reached a close, oldest first. A closed lesson is finished: `close`
+    stamps every sitting of it, so a later repair starts from the top."""
+    out = []
+    if not key:
+        return out
+    for path in sorted((Path(course) / "log").glob("*.md")):
+        text = _read(path)
+        if CLOSED_STAMP in text or _brief_comment(text).get("lesson") != key:
+            continue
+        done = _progress_items(text)
+        if done:
+            out.append((_log_date(path, course), done))
+    return out
+
+
+def _stamp_closed(course: Path, logfile: Path, key):
+    """Mark this log, and every unfinished sitting of the same lesson,
+    as closed. Idempotent."""
+    paths = {Path(logfile).resolve()}
+    if key and key != "-":
+        paths |= {q.resolve() for q in (Path(course) / "log").glob("*.md")
+                  if _brief_comment(_read(q)).get("lesson") == key}
+    for q in sorted(paths):
+        text = _read(q)
+        if CLOSED_STAMP in text:
+            continue
+        head, sep, rest = text.partition("\n")
+        _write(q, f"{head}\n{CLOSED_STAMP}\n{rest}" if sep
+               else f"{text}\n{CLOSED_STAMP}\n")
+
+
+def _teach_target(course: Path, d: dict):
+    """The concept a session teaches for the first time, if any."""
+    if d["type"] == "catch-up":
+        return d.get("concept")
+    if d["type"] == "standard" and d.get("unit"):
+        _, records = load_state(course)
+        left = [c for c in d["unit"]["concepts"]
+                if records[c]["status"] == "untaught"]
+        return left[0] if left else None
+    return None
+
+
+def _note_attendance(course: Path, path: Path):
+    """A sitting that delivered part of a lesson and graded nothing is
+    still the learner showing up: move last-attended, nothing else."""
+    if not _progress_items(_read(path)):
+        return
+    header = parse_plan(course)[0]
+    date = _log_date(path, course)
+    if header["last-attended"] == "-" or date > header["last-attended"]:
+        write_plan_header(course, {"last-attended": date,
+                                   "re-entry-pending": "no"})
+        _commit(course, "recover: a lesson paused mid-way")
 
 
 def _lesson_path(course: Path, key):
@@ -2206,10 +2297,19 @@ def cmd_begin(course: Path):
                             f"{target}'s coverage line")
         if u["artifact"] and u["artifact"] != "none":
             lines.append(f"artifact-milestone: {u['artifact']}")
-    lesson = _lesson_path(course, _lesson_key(course, d, target))
+    lesson_key = _lesson_key(course, d, target)
+    lesson = _lesson_path(course, lesson_key)
     if lesson:
         lines.append(f"lesson: {lesson} — the session's script; teach it "
                      "section by section")
+    sittings = _lesson_progress(course, lesson_key)
+    if sittings:
+        done = list(dict.fromkeys(s for _, secs in sittings for s in secs))
+        lines.append(
+            f"resume-lesson: this lesson was started on {sittings[0][0]} "
+            f"and already delivered: {'; '.join(done)}. Do not re-teach or "
+            "re-ask those. Recap them in two or three sentences, then "
+            "continue with the next section.")
     if plan:
         lines.append(REVIEW_LINES[plan[0]].format(n=plan[1]))
     lines.append(f"quiz these ({len(ids)}): {', '.join(ids) or '-'}")
@@ -2300,7 +2400,9 @@ def cmd_begin(course: Path):
             offered.add(cid)
             owed_pins.append(str(n))
 
-    if state == "reset" and abandoned_age is not None:
+    if sittings:
+        pass          # resume-lesson above says what happened and what to do
+    elif state == "reset" and abandoned_age is not None:
         hrs = int(abandoned_age.total_seconds() // 3600)
         lines.append(
             f"NOTE: a session was started ~{hrs}h ago and abandoned before "
@@ -2329,10 +2431,7 @@ def cmd_begin(course: Path):
     for old in (course / "log").glob("*.md"):
         if old == draft:
             continue
-        body = _read(old)
-        if not any(_section(body, h).strip() for h in
-                   (TAUGHT_HEAD_RE, ASKED_HEAD_RE, re.compile(
-                       r"^##+\s*grades\s*$", re.M | re.I))):
+        if not _holds_something(_read(old)):
             old.unlink()
     _ignore_runtime_files(course)
     _write(course / BRIEF_FILE, "\n".join(lines))
@@ -2351,10 +2450,11 @@ def cmd_begin(course: Path):
                  f"quiz={','.join(ids) or '-'} "
                  f"teach={','.join(dict.fromkeys(teach)) or '-'} "
                  f"owed={','.join(owed_pins) or '-'} "
-                 f"back={','.join(backs_due) or '-'}")
+                 f"back={','.join(backs_due) or '-'} "
+                 f"lesson={lesson_key or '-'}")
         draft.write_text(
             f"session: {token}\n<!-- brief: {brief} -->\n\n"
-            "## taught\n\n## grades\n\n## asked\n\n"
+            "## progress\n\n## taught\n\n## grades\n\n## asked\n\n"
             "## open question\n", encoding="utf-8")
     return "\n".join(lines)
 
@@ -2425,6 +2525,8 @@ def cmd_close(course: Path, logfile: Path, _resume=False):
     journal = course / CLOSE_JOURNAL
     rel = os.path.relpath(Path(logfile).resolve(), Path(course).resolve())
     _write(journal, f"session: {session}\nlog: {rel}\n")
+    # a closed lesson is finished: no later sitting resumes it
+    _stamp_closed(course, logfile, brief.get("lesson"))
     applied = cmd_commit_grades(course, logfile,
                                 as_of=_log_date(logfile, course))
     if applied == "applied" or _resume:

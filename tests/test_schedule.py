@@ -2835,5 +2835,112 @@ class TestLessonFiles(CourseCase):
         self.assertNotIn("lessons/gamma.md", w)    # its unit is unauthored
 
 
+class TestLessonResume(CourseCase):
+    """A lesson is longer than one sitting can always hold. In the live
+    course a catch-up interrupted mid-way restarted from a new cold
+    question each day (34r4 opened three times); now the draft records
+    which sections were delivered and the next sitting continues."""
+
+    def stale(self, token):
+        p = self.dir / S.SENTINEL
+        p.write_text(f"session: {token}\n", encoding="utf-8")
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+
+    def deliver(self, draft, *sections):
+        text = draft.read_text(encoding="utf-8")
+        text = text.replace("## progress\n", "## progress\n" + "".join(
+            f"- {s}\n" for s in sections), 1)
+        draft.write_text(text, encoding="utf-8")
+
+    def first_sitting(self, *sections):
+        self.git_init()
+        S.cmd_begin(self.dir)
+        draft = (self.dir / "log"
+                 / f"{os.environ['ARISTOTLE_TODAY']}-2.md")
+        self.deliver(draft, *sections)
+        return draft
+
+    def test_the_draft_carries_a_progress_section_and_its_lesson(self):
+        S.cmd_begin(self.dir)
+        text = (self.dir / "log" / f"{TODAY}-2.md").read_text("utf-8")
+        self.assertIn("## progress\n", text)
+        self.assertEqual(S._brief_comment(text)["lesson"], "beta")
+
+    def test_an_interrupted_lesson_resumes_where_it_stopped(self):
+        self.first_sitting("1. why beta", "2. how beta works")
+        self.stale("2")
+        os.environ["ARISTOTLE_TODAY"] = "2026-07-23"
+        out = S.cmd_begin(self.dir)
+        self.assertIn("session: 2 of", out)
+        self.assertIn("resume-lesson:", out)
+        self.assertIn("1. why beta; 2. how beta works", out)
+        self.assertNotIn("this session repeats it", out)
+
+    def test_a_lesson_left_with_no_lock_also_resumes(self):
+        """The went-quiet path deletes the sentinel and nothing else."""
+        self.first_sitting("1. why beta")
+        (self.dir / S.SENTINEL).unlink()
+        os.environ["ARISTOTLE_TODAY"] = "2026-07-23"
+        out = S.cmd_begin(self.dir)
+        self.assertIn("resume-lesson:", out)
+        self.assertIn("1. why beta", out)
+
+    def test_a_sitting_that_only_made_progress_still_counts_as_attending(self):
+        """Or a learner working through a long lesson a section a day is
+        declared dormant in the middle of it."""
+        os.environ["ARISTOTLE_TODAY"] = "2026-07-30"
+        self.first_sitting("1. why beta")
+        self.stale("2")
+        os.environ["ARISTOTLE_TODAY"] = "2026-08-12"
+        out = S.cmd_begin(self.dir)
+        self.assertNotIn("type: dormant", out)
+        self.assertIn("resume-lesson:", out)
+        self.assertEqual(S.parse_plan(self.dir)[0]["last-attended"],
+                         "2026-07-30")
+
+    def test_a_closed_lesson_is_never_resumed(self):
+        draft = self.first_sitting("1. why beta", "2. how beta works")
+        text = draft.read_text(encoding="utf-8")
+        draft.write_text(
+            text.replace("## taught\n", "## taught\n- beta: all of it\n")
+                .replace("## grades\n", "## grades\n- grade: beta | result: "
+                         "taught | note: lesson complete\n"),
+            encoding="utf-8")
+        S.cmd_close(self.dir, draft)
+        self.assertIn("<!-- closed -->", draft.read_text(encoding="utf-8"))
+        self.set_meta(**{"repair-pending": "beta"})
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: repair", out)
+        self.assertNotIn("resume-lesson:", out)
+
+    def test_closing_settles_the_earlier_sittings_too(self):
+        first = self.first_sitting("1. why beta")
+        self.stale("2")
+        os.environ["ARISTOTLE_TODAY"] = "2026-07-23"
+        S.cmd_begin(self.dir)
+        second = self.dir / "log" / "2026-07-23-2.md"
+        self.deliver(second, "2. how beta works")
+        text = second.read_text(encoding="utf-8")
+        second.write_text(
+            text.replace("## taught\n", "## taught\n- beta: all of it\n")
+                .replace("## grades\n", "## grades\n- grade: beta | result: "
+                         "taught | note: lesson complete\n"),
+            encoding="utf-8")
+        S.cmd_close(self.dir, second)
+        self.assertIn("<!-- closed -->", first.read_text(encoding="utf-8"))
+
+    def test_the_pointer_names_a_lesson_in_progress(self):
+        self.first_sitting("1. why beta", "2. how beta works")
+        self.stale("2")
+        S.cmd_recover(self.dir)
+        out = S.cmd_pointer(self.dir)
+        self.assertIn("in-progress: beta — 2 section(s) delivered, "
+                      "last: 2. how beta works", out)
+
+    def test_no_progress_no_in_progress_line(self):
+        self.assertNotIn("in-progress:", S.cmd_pointer(self.dir))
+
+
 if __name__ == "__main__":
     unittest.main()
