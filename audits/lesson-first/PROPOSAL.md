@@ -51,6 +51,21 @@ What stays: all state in the course directory, `begin`/`close` as the only state
 | Longer sessions | the 2-hour live-lock, Telegram's 4,096-character limit | A 250-word message is ~1,700 characters. A pause over two hours lets the cron clear the lock; the next reply resumes from progress. |
 | Lesson content for the live course | `lessons/` (new), nothing else | Asset banks, ids and the single-use ledger are untouched. Units 1-5 were taught thin and get no retroactive lessons; their material returns through callbacks, owed items and case studies. |
 
+## What the test showed
+
+Three lessons from different units were each run end to end three ways, with a simulated learner built from the real learner's replies (median 20 words, blunt, quick to call out an unfair question). "Key facts" is a fixed list of 16-23 figures and names per lesson, counted in the tutor's messages.
+
+| | Tutor words | Key facts delivered | Typical message |
+|---|---|---|---|
+| As originally taught (real transcripts) | 377-687 | 2-3 of ~20 | 44-111 words |
+| Lesson file + the old ten-line "teach it conversationally" note, GPT-6.2 Sol | 587-877 | 2-4 of ~20 | ~100 words |
+| Lesson file + this SKILL.md, GPT-6.2 Sol | 1,862-2,045 | 16/16, 22/23, 19/19 | ~250 words |
+| Lesson file + the ten-line note, Claude Opus | 1,687-2,555 | 16/16, 21/23, 19/19 | 230-310 words |
+
+Two things follow. The written lesson file is necessary under every arrangement. And how much procedure a tutor needs depends on the model: one expanded a full lesson from ten lines of instruction, the other compressed the same file into short Socratic turns built on toy arithmetic until the turn anatomy in SKILL.md §2 told it not to. The procedure is written for the model that needs it.
+
+The first runs also showed a status line before every tool call, figures looked up mid-lesson, three to five source links per message and research added beyond the lesson; SKILL.md was tightened for each and the runs repeated.
+
 ## Rollback
 
-Every repo is tagged `pre-lesson-first`. Engine changes land as separate commits (lesson line; progress and resume; callbacks; owed/case-study), then the procedure, then the course's adoption in one commit, so the course can return to the old method by reverting that one commit while keeping its lesson files. The cron prompt lives outside git; its previous text is in the adoption commit's message trail (`audits/lesson-first/cron-prompt.before.txt`).
+Every repo is tagged `pre-lesson-first`. Engine changes land as separate commits (lesson line; progress and resume; callbacks; owed/case-study), then the procedure, then the course's adoption in one commit, so the course can return to the old method by reverting that one commit while keeping its lesson files. The live deployment's cron prompt lives outside git; its text before and after the change is kept in the course's own repository.
