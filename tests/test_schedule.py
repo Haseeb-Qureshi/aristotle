@@ -1004,7 +1004,7 @@ class TestDispatch(CourseCase):
         self.settle()
         self.hdr(**{"next-session": "3/10"})
         d = S.dispatch(self.dir)
-        self.assertEqual(d["type"], "teach-back")
+        self.assertEqual(d["type"], "case-study")
         self.assertEqual(d["cap"], S.QUEUE_CAP)
 
     def test_placement_on_session_one(self):
@@ -1192,7 +1192,7 @@ class TestBeginClose(CourseCase):
         S.cmd_close(self.dir, self.write_log(
             "2026-07-21-2.md", log_text("2", ("beta", "taught", "x"))))
         self.add_u2_assets()
-        self.assertIn("type: teach-back", S.cmd_begin(self.dir))
+        self.assertIn("type: case-study", S.cmd_begin(self.dir))
         S.cmd_close(self.dir, self.write_log(
             "2026-07-21-3.md", log_text("3", ("alpha", "rubric-pass", "y"))))
         self.assertEqual(S.parse_plan(self.dir)[0]["next-session"], "4/10")
@@ -2053,8 +2053,8 @@ class TestVariedReview(CourseCase):
         os.environ["ARISTOTLE_REVIEW_PLAN"] = "exit:1"
         S.write_plan_header(self.dir, {"next-session": "3/10"})
         out = S.cmd_begin(self.dir)
-        self.assertIn("type: teach-back", out)
-        self.assertIn("teach-back: alpha", out)
+        self.assertIn("type: case-study", out)
+        self.assertIn("synthesis: alpha", out)
         self.assertIn("bring back (1)", out)
 
     def test_plan_is_deterministic_per_token(self):

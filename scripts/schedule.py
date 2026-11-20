@@ -727,7 +727,7 @@ def build_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh",
     course = Path(course)
     meta, records = load_state(course)
     today = _today(course).isoformat()
-    # a session's own teach/teach-back target is its main event, never also
+    # a session's own teach/synthesis target is its main event, never also
     # a review item: the tutor would grade it twice and close would refuse
     live = [r for r in records.values()
             if r["status"] == "active" and r["verify"] != "none"
@@ -1171,7 +1171,7 @@ def cmd_check(course: Path):
                     f"unit {unit['num']}: keystone {cid!r} is not one of "
                     "the unit's own concepts")
 
-    # the course must FIT: one session per concept, plus a teach-back,
+    # the course must FIT: one session per concept, plus the case study,
     # plus the terminal synthesis session at the end
     size = course_size(header)
     for unit in units:
@@ -1185,7 +1185,7 @@ def cmd_check(course: Path):
                 f"unit {unit['num']} has {len(unit['concepts'])} concepts "
                 f"but only {unit['sessions']} sessions — needs >={floor} "
                 "(one per concept at <=1 new concept/session, plus the "
-                "teach-back)")
+                "unit's case study)")
     total = sum(u["sessions"] for u in units)
     if total > size - MIN_CONSOLIDATION:
         raise IntegrityError(
@@ -1391,13 +1391,14 @@ def dispatch(course: Path):
     left = [c for c in here["concepts"]
             if records.get(c, {}).get("status") == "untaught"]
     if idx == here["end"] and left:
-        # coverage before ritual: the keystone's teach-back is owed instead
+        # coverage before ritual: the lesson outranks the unit's case study
         out["type"] = "standard"
         out["why"] = (f"last slot of unit {here['num']}, but {left[0]} is "
-                      "still untaught — teach it; the teach-back is owed")
+                      "still untaught — teach it instead of the case study")
     elif idx == here["end"]:
-        out["type"], out["cap"] = "teach-back", QUEUE_CAP
-        out["why"] = f"last session of unit {here['num']}"
+        out["type"], out["cap"] = "case-study", QUEUE_CAP
+        out["why"] = (f"last session of unit {here['num']} — a real case, "
+                      "taught, with the unit's concepts doing the work")
     else:
         out["type"] = "standard"
         out["why"] = f"session {idx - here['start'] + 1} of unit {here['num']}"
@@ -1922,7 +1923,7 @@ def _lesson_key(course: Path, d: dict, target):
         return d.get("concept")
     if kind in ("standard", "catch-up") and target:
         return target
-    if kind == "teach-back" and d.get("unit"):
+    if kind == "case-study" and d.get("unit"):
         return f"unit-{d['unit']['num']:02d}-case"
     if kind == "consolidation":
         return "final"
@@ -2204,7 +2205,7 @@ def cmd_begin(course: Path):
 
     plan = None
     lead = "fresh"
-    if d["type"] in ("standard", "catch-up", "teach-back"):
+    if d["type"] in ("standard", "catch-up", "case-study"):
         _, recs_now = load_state(course)
         today_iso = _today(course).isoformat()
         due = sum(1 for r in recs_now.values()
@@ -2226,13 +2227,13 @@ def cmd_begin(course: Path):
     main_event = set()
     if d.get("concept"):
         main_event.add(d["concept"])
-    if d["type"] == "teach-back" and d["unit"]:
+    if d["type"] == "case-study" and d["unit"]:
         main_event |= set(d["unit"]["keystones"])
     ids = cmd_queue(course, cap=d["cap"], terminal=d["terminal"], lead=lead,
                     exclude=main_event,
                     prefer=_stands_on(course, main_event | {
                         c for c in [_teach_target(course, d)] if c} | set(
-                        d["unit"]["concepts"] if d["type"] == "teach-back"
+                        d["unit"]["concepts"] if d["type"] == "case-study"
                         and d["unit"] else ())))
     _, records = load_state(course)
     bookend = f"Session {d['index']}"
@@ -2273,10 +2274,11 @@ def cmd_begin(course: Path):
             target = d["concept"]
         elif d["type"] == "standard" and untaught:
             target = untaught[0]
-        backs = u["keystones"] if d["type"] == "teach-back" else []
+        backs = u["keystones"] if d["type"] == "case-study" else []
         for k in backs:
-            lines.append(f"teach-back: {k} — grade against its "
-                         f"## rubric block in assets/unit-{u['num']:02d}.md")
+            lines.append(f"synthesis: {k} — grade their closing read of "
+                         "the case against its ## rubric block in "
+                         f"assets/unit-{u['num']:02d}.md")
         if target and not backs:
             dfn = parse_map(course).get(target, {}).get("def", "")
             lines.append(f"teach: {target}" + (f" — {dfn}" if dfn else ""))
@@ -2317,7 +2319,7 @@ def cmd_begin(course: Path):
         sec = _asset_section(course, cid)
         if sec:
             lines.append(f"read: {sec[0]} lines {sec[1]}-{sec[2]} ({cid})")
-    backs_now = (list(d["unit"]["keystones"]) if d["type"] == "teach-back"
+    backs_now = (list(d["unit"]["keystones"]) if d["type"] == "case-study"
                  and d["unit"] else [])
     for k in backs_now:
         sec = _asset_section(course, k, kind="rubric")
@@ -2360,7 +2362,7 @@ def cmd_begin(course: Path):
                      + ", ".join(bank))
 
     # --- coverage: what these concepts were actually SHOWN ------------
-    # (the session's own teach-back target too: its grade must be fair)
+    # (the session's own synthesis target too: its grade must be fair)
     covered_ids = list(dict.fromkeys(ids + backs_now))
     if covered_ids:
         taught = _taught_history(course)
@@ -2438,7 +2440,7 @@ def cmd_begin(course: Path):
         # grade (session 33's PPA probe was on a concept nobody queued)
         teach = [c for c in (target, d.get("concept")) if c]
         backs_due = []
-        if d["type"] == "teach-back" and d["unit"]:
+        if d["type"] == "case-study" and d["unit"]:
             backs_due = list(d["unit"]["keystones"])
         teach += backs_due
         brief = (f"review={'none' if plan and plan[1] == 0 else f'{plan[0]}:{plan[1]}' if plan else '-'} "
@@ -2482,7 +2484,7 @@ def cmd_close(course: Path, logfile: Path, _resume=False):
         for k in [x for x in brief.get("back", "-").split(",") if x != "-"]:
             if not results.get(k, "").startswith("rubric"):
                 warnings.append(
-                    f"warn: the brief set a teach-back of {k} but it got "
+                    f"warn: this case study's synthesis on {k} got "
                     f"{results.get(k, 'no grade')!r}, not rubric-pass/"
                     "rubric-fail — the keystone goes ungraded this unit "
                     "(nothing is owed for it).")
@@ -2503,9 +2505,10 @@ def cmd_close(course: Path, logfile: Path, _resume=False):
                 f"the live session is {held!r} but this log says {session!r} "
                 "— refusing to close someone else's session")
 
-    # a teach-back is settled only by a rubric grade; anything else would
-    # leave it owed and re-dispatch it forever, so the live tutor fixes the
-    # log now (recovery paths stay lenient: losing evidence is worse)
+    # a case study's synthesis is graded against the rubric or not at
+    # all: a plain pass/fail would move the keystone's interval on a
+    # standard it was never held to, so the live tutor fixes the log now
+    # (recovery paths stay lenient: losing evidence is worse)
     try:
         results = {g["id"]: g["result"] for g in parse_log_grades(text)[1]}
     except (FormatError, IntegrityError):
@@ -2513,10 +2516,10 @@ def cmd_close(course: Path, logfile: Path, _resume=False):
     for k in [x for x in brief.get("back", "-").split(",") if x != "-"]:
         if k in results and not results[k].startswith("rubric"):
             raise IntegrityError(
-                f"log error: this session was a teach-back of {k}, graded "
-                f"{results[k]!r} — a teach-back is graded rubric-pass or "
-                "rubric-fail against its ## rubric block. Fix the grade line "
-                "and close again.")
+                f"log error: this session was the case study whose synthesis "
+                f"is {k}, graded {results[k]!r} — a synthesis is graded "
+                "rubric-pass or rubric-fail against its ## rubric block. "
+                "Fix the grade line and close again.")
     journal = course / CLOSE_JOURNAL
     rel = os.path.relpath(Path(logfile).resolve(), Path(course).resolve())
     _write(journal, f"session: {session}\nlog: {rel}\n")
