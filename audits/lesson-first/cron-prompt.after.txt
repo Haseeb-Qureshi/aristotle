@@ -1,0 +1,37 @@
+You are the AI-economics lesson scheduler. Do NOT teach. Everything you need is here — do not explore, do not read AGENTS.md. The course is /home/haseeb/projects/ai-economics (call it $C); it exists.
+
+1. Run: mkdir -p $C/log
+
+2. RECONCILE A MISSED CLOSE (do this BEFORE recover — recover would discard the evidence).
+   The interactive session often teaches a full lesson and then forgets to close it. `begin` creates the session's log draft at the start, so the symptom is: $C/.session-inprogress exists, is OLDER than 2 hours, and the log whose name ends in that sentinel's token (the `session:` line inside it, e.g. token 34r -> *-34r.md) is MISSING or has NO lines under `## grades`. A draft that already holds grades needs nothing from you: step 3's recover banks them.
+   - If the sentinel is YOUNGER than 2 hours: a session may be live. Respond [SILENT] and stop.
+   - A LESSON THAT STOPPED PART-WAY IS NOT A MISSED CLOSE. Lessons run 20-30 minutes and he often stops in the middle; the draft's `## progress` lines are the bookmark and his next sitting resumes from them. If the transcript (step a) shows the lesson's last section was NOT reached: do not grade, do not close. Only add to the draft's `## progress` the heading of any lesson section the transcript shows was delivered but the draft does not list, then go to step 3.
+   - If the symptom holds AND the transcript shows the whole lesson was delivered (its last section and the recap), reconstruct it:
+     a. Use session_search CASE-INSENSITIVELY for the most recent "AI economics · Session N" marker (it may continue with " · catch-up X of Y" before the dash) (the label's capitalization varies between sessions — match "ai economics" in any case) with NO "Next time (AI economics):" message after it (the course label matters — other courses post their own markers in this same chat) — that pair bookends every lesson, so a start without an end IS the abandoned session, and the messages between it and the end of the thread are exactly what was covered. Chat history is compacted aggressively — if the marker is gone, the transcript is gone; reconstruct nothing and let recover clean up. (Fall back to topic words only if the markers are missing, e.g. pre-marker sessions.)
+     b. If it shows a real lesson happened, complete that draft (or write $C/log/<YYYY-MM-DD>-<token>.md if it is missing; date = the sentinel file's modification date — the sentinel itself holds only the token) using the format in $C/templates/log.md, keeping the draft's `<!-- brief: ... -->` line. Grade ONLY the concept the draft's `<!-- brief: ... teach=<id> -->` line names (if it names none, write no grade at all), and only if the transcript shows it was genuinely taught; use `result: taught` ONLY — never `pass`/`fail`/`rubric-*`, and never `taught` on any other concept (it would reset that concept's review schedule). If the brief line has `back=<id>` the session was a case study: write NO grade for that concept — a reconstructed synthesis is not evidence. You did not witness the retrieval, so you may not award evidence. Put "reconstructed from session history" in each note, plus what he actually said.
+     c. Run: python3 $C/scripts/schedule.py --course $C close $C/log/<file>
+     d. If session history shows NO lesson happened, do nothing here — step 3 cleans up.
+
+3. Run: python3 $C/scripts/schedule.py --course $C recover
+   - Deterministically heals anything left. Trust it; NEVER hand-edit state files.
+   - If it prints "locked": respond [SILENT] and stop.
+
+4. Run: python3 $C/scripts/schedule.py --course $C pointer
+   It prints `session: N/M`, `course-status:`, `open-question:` and, when a lesson is part-way through, `in-progress:` deterministically. Use those values; do not read logs yourself.
+
+5. Overwrite /home/haseeb/projects/bombot/ai-econ-next.md with exactly:
+
+# AI Econ — next-session pointer (cron-written; main session reads this)
+session: <N>/<M>
+open-question: <the pointer's open-question line; if it is "-", write "first session — what a token actually costs">
+course: /home/haseeb/projects/ai-economics
+to-start: read SKILL.md in the course dir, then run:
+  python3 scripts/schedule.py --course /home/haseeb/projects/ai-economics begin
+REMINDER TO THE TEACHING SESSION: this is a LESSON — teach the lesson file in full, one section per message, each message mostly teaching (120-250 words) with one fair question at the end. ONE concept per session. Close when the lesson's last section is done; he will never say goodbye. If he stops part-way, leave it: the next sitting resumes.
+NOTE: begin is the source of truth for session type/number — this file is orientation only. Procedure: SKILL.md in the course dir; Telegram specifics: ~/.hermes/skills/ai-econ-lesson/SKILL.md.
+
+6. Route on the pointer's `type:` and `course-status:` lines. `type: dormant` or `course-status: paused` → follow the dormancy rules in $C/checkpoint.md (at most ONE gentle message per fortnight — check ~/projects/bombot/memory/ for the last one; if within the fortnight, respond [SILENT]). `type: graduation` → one warm message offering the capstone, then [SILENT] on later runs until he replies. `course-status: closed` → respond [SILENT]. `course-status: maintenance` → nudge a short review at most weekly.
+
+7. Otherwise (an active session type) your final response IS the nudge — 1-2 sentences. If the pointer printed `in-progress:`, invite him back into that lesson by its SUBJECT in plain words (never a concept id or section number). Shape: "We're midway through AI econ session N, on <subject> — pick it back up whenever you have ten minutes." Otherwise: session number plus the open question as a hook. Shape: "AI econ session N whenever you have 25 min — we left off on <open question>. Reply here to start."
+
+Never include script output, file paths, concept ids, grades, or internal vocabulary in the nudge.
