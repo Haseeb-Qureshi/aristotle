@@ -2775,5 +2775,65 @@ class TestCourseWarnings(CourseCase):
         self.assertIn("nothing to warn against", self.warns())
 
 
+# ======================================================== lesson-first
+# audits/lesson-first/PROPOSAL.md — sessions are lessons taught from a
+# lesson file; questions serve the lesson.
+
+class TestLessonFiles(CourseCase):
+    """A concept taught from one paragraph was not taught: the live
+    course's keystone lessons ran ~70 words (2026-10). A lesson file
+    is the session's script, and the brief names it."""
+
+    def at(self, n):
+        S.write_plan_header(self.dir, {"next-session": f"{n}/10"})
+
+    def lesson(self, name, body="# a lesson\n\n## 1. first\ntext\n"):
+        d = self.dir / "lessons"
+        d.mkdir(exist_ok=True)
+        (d / f"{name}.md").write_text(body, encoding="utf-8")
+
+    def test_brief_names_the_lesson_for_the_concept_taught(self):
+        self.lesson("beta")
+        self.lesson("alpha")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("lesson: lessons/beta.md", out)
+        self.assertNotIn("lessons/alpha.md", out)
+
+    def test_no_lesson_file_no_line(self):
+        self.assertNotIn("lesson:", S.cmd_begin(self.dir))
+
+    def test_unit_end_session_names_the_units_case(self):
+        self.set_record("beta", status="active", next="2026-08-30")
+        self.at(3)
+        self.lesson("unit-01-case")
+        self.assertIn("lesson: lessons/unit-01-case.md",
+                      S.cmd_begin(self.dir))
+
+    def test_review_block_names_its_case_by_the_unit_before_it(self):
+        (self.dir / "plan.md").write_text(REVIEW_PLAN_MD, encoding="utf-8")
+        self.settle("alpha")
+        self.lesson("review-01")
+        self.assertIn("lesson: lessons/review-01.md", S.cmd_begin(self.dir))
+
+    def test_final_synthesis_names_final(self):
+        self.settle("alpha", "gamma")
+        self.add_u2_assets()
+        self.at(7)
+        self.lesson("final")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: consolidation", out)
+        self.assertIn("lesson: lessons/final.md", out)
+
+    def test_an_authored_unit_missing_a_lesson_is_flagged(self):
+        """Advisory, and only once a course has adopted lesson files —
+        a course written before them must not start warning."""
+        self.assertNotIn("lessons/", " | ".join(S.course_warnings(self.dir)))
+        self.lesson("alpha")
+        w = " | ".join(S.course_warnings(self.dir))
+        self.assertIn("lessons/beta.md", w)
+        self.assertNotIn("lessons/alpha.md", w)    # taught and present
+        self.assertNotIn("lessons/gamma.md", w)    # its unit is unauthored
+
+
 if __name__ == "__main__":
     unittest.main()

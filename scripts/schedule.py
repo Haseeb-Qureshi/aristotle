@@ -1266,6 +1266,19 @@ def course_warnings(course: Path):
         out.append("templates/log.md missing — the close step checks the "
                    "session log against it.")
 
+    # once a course teaches from lesson files, an authored unit with an
+    # untaught concept and no lesson would be taught from one paragraph
+    if (course / LESSON_DIR).is_dir():
+        _, records = load_state(course)
+        for u in real:
+            if not assets_path(course, u["num"]).exists():
+                continue
+            for c in u["concepts"]:
+                if records.get(c, {}).get("status") == "untaught" \
+                        and not _lesson_path(course, c):
+                    out.append(f"{LESSON_DIR}/{c}.md is missing: {c} is "
+                               "untaught and has no lesson to teach from.")
+
     # a `- visual:` asset line promises a rendered image; a dangling one
     # would make the tutor send a broken MEDIA path mid-lesson
     for path in sorted((course / "assets").glob("unit-*.md")):
@@ -1886,6 +1899,41 @@ def cmd_recover(course: Path):
     return "reset"
 
 
+# ------------------------------------------------------------- lessons
+# A session is a lesson taught from a file, not a paragraph between quiz
+# items (audits/lesson-first). The key names the file and, later, lets
+# an interrupted lesson be picked up where it stopped.
+LESSON_DIR = "lessons"
+
+
+def _lesson_key(course: Path, d: dict, target):
+    """The lesson this session teaches: a concept id, `unit-NN-case` for
+    a unit's last session, `review-NN` for the review block after unit
+    NN, `final` for the closing synthesis. None when it teaches none."""
+    kind = d["type"]
+    if kind == "repair":
+        return d.get("concept")
+    if kind in ("standard", "catch-up") and target:
+        return target
+    if kind == "teach-back" and d.get("unit"):
+        return f"unit-{d['unit']['num']:02d}-case"
+    if kind == "consolidation":
+        return "final"
+    if kind == "review":
+        _, units = parse_plan(course)
+        before = [u["num"] for u in units if u.get("num") is not None
+                  and u["end"] < d["index"]]
+        return f"review-{before[-1]:02d}" if before else None
+    return None
+
+
+def _lesson_path(course: Path, key):
+    """Course-relative path of a lesson file, or None if not authored."""
+    if key and (Path(course) / LESSON_DIR / f"{key}.md").is_file():
+        return f"{LESSON_DIR}/{key}.md"
+    return None
+
+
 # ------------------------------------------------------------ begin / close
 
 def _next_token(idx: int, kind: str, committed) -> str:
@@ -2158,6 +2206,10 @@ def cmd_begin(course: Path):
                             f"{target}'s coverage line")
         if u["artifact"] and u["artifact"] != "none":
             lines.append(f"artifact-milestone: {u['artifact']}")
+    lesson = _lesson_path(course, _lesson_key(course, d, target))
+    if lesson:
+        lines.append(f"lesson: {lesson} — the session's script; teach it "
+                     "section by section")
     if plan:
         lines.append(REVIEW_LINES[plan[0]].format(n=plan[1]))
     lines.append(f"quiz these ({len(ids)}): {', '.join(ids) or '-'}")
