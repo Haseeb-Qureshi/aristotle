@@ -2880,6 +2880,48 @@ class TestLessonFiles(CourseCase):
         self.assertIn("type: consolidation", out)
         self.assertIn("lesson: lessons/final.md", out)
 
+    def test_the_brief_names_the_next_lesson_for_the_teaser(self):
+        """A dry run of the live course closed a lesson on a teaser
+        about something the next session does not teach. The open
+        question is the doorway into the next lesson, so the brief says
+        what that lesson is."""
+        self.add_u2_assets()
+        self.settle("alpha")
+        self.set_record("gamma", status="untaught", next="-", last="-")
+        self.set_record("delta", status="untaught", next="-", last="-")
+        S.write_plan_header(self.dir, {"next-session": "4/10"})
+        self.lesson("gamma")
+        self.lesson("delta", "# Why delta follows gamma\n\n## 1. x\ny\n")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("teach: gamma", out)
+        self.assertIn("next lesson: Why delta follows gamma", out)
+
+    def test_the_last_concept_points_at_the_units_case_study(self):
+        self.lesson("beta")
+        self.lesson("unit-01-case", "# The alpha company, opened up\n")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("teach: beta", out)
+        self.assertIn("next lesson: The alpha company, opened up", out)
+
+    def test_no_next_lesson_line_without_a_file(self):
+        self.lesson("beta")
+        self.assertNotIn("next lesson:", S.cmd_begin(self.dir))
+
+    def test_only_a_case_study_is_told_about_the_artifact(self):
+        """Printed on every session of the unit, the milestone had the
+        tutor editing the learner's artifact by itself at the end of an
+        ordinary lesson."""
+        (self.dir / "plan.md").write_text(
+            PLAN_MD.replace("artifact-milestone: none",
+                            "artifact-milestone: draft the first page"),
+            encoding="utf-8")
+        self.assertNotIn("artifact-milestone", S.cmd_begin(self.dir))
+        (self.dir / S.SENTINEL).unlink()
+        self.set_record("beta", status="active", next="2026-08-30")
+        self.at(3)
+        self.assertIn("artifact-milestone: draft the first page",
+                      S.cmd_begin(self.dir))
+
     def test_an_authored_unit_missing_a_lesson_is_flagged(self):
         """Advisory, and only once a course has adopted lesson files —
         a course written before them must not start warning."""

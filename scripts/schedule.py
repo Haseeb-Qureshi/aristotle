@@ -2015,6 +2015,25 @@ def _note_attendance(course: Path, path: Path):
         _commit(course, "recover: a lesson paused mid-way")
 
 
+def _next_lesson_title(course: Path, d: dict, target):
+    """Title of the lesson the NEXT session will teach, when that is
+    knowable and written: the unit's next untaught concept, or its case
+    study once this was the last one. The close's open question is the
+    doorway into it."""
+    u = d.get("unit")
+    if not target or not u or d["type"] not in ("standard", "catch-up"):
+        return None
+    _, records = load_state(course)
+    left = [c for c in u["concepts"]
+            if records[c]["status"] == "untaught" and c != target]
+    key = left[0] if left else f"unit-{u['num']:02d}-case"
+    rel = _lesson_path(course, key)
+    if not rel:
+        return None
+    m = re.search(r"^# (.+)$", _read(Path(course) / rel), re.M)
+    return m.group(1).strip() if m else None
+
+
 def _lesson_path(course: Path, key):
     """Course-relative path of a lesson file, or None if not authored."""
     if key and (Path(course) / LESSON_DIR / f"{key}.md").is_file():
@@ -2296,13 +2315,20 @@ def cmd_begin(course: Path):
                             "after your prose has taught it and with no "
                             f"question open; log its presents: facts on "
                             f"{target}'s coverage line")
-        if u["artifact"] and u["artifact"] != "none":
+        # the artifact is the learner's; its milestone lands in the unit's
+        # case study, not at the end of every lesson
+        if (d["type"] == "case-study" and u["artifact"]
+                and u["artifact"] != "none"):
             lines.append(f"artifact-milestone: {u['artifact']}")
     lesson_key = _lesson_key(course, d, target)
     lesson = _lesson_path(course, lesson_key)
     if lesson:
         lines.append(f"lesson: {lesson} — the session's script; teach it "
                      "section by section")
+    nxt_title = _next_lesson_title(course, d, target)
+    if nxt_title:
+        lines.append(f"next lesson: {nxt_title} — leave them on an open "
+                     "question that is a doorway into it")
     sittings = _lesson_progress(course, lesson_key)
     if sittings:
         done = list(dict.fromkeys(s for _, secs in sittings for s in secs))

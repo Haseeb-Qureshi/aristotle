@@ -17,7 +17,7 @@ Let `$C` = the course directory. `S = python3 $C/scripts/schedule.py --course $C
 S begin
 ```
 
-It recovers from any crash, locks the session, validates the course, decides the session type, creates today's log draft, and prints your brief: the session token and type, the `bookend:` label, the `log file:`, the unit, the `teach:` or `synthesis:` target, the `lesson:` file, any `resume-lesson:` line, the `callbacks:` cap and the `bring back` candidates, the last session and its `open question`, `asked recently`, `bank items used`, the `presented` record for each candidate, any `owed:` items, `read:` pointers, a `picture:` line, a `checkpoint:` line when one is due, and any `NOTE:`. Every line is an instruction; follow it. If you lose your context mid-lesson, `S resume` reprints this brief verbatim; read it and the draft before you say another word.
+It recovers from any crash, locks the session, validates the course, decides the session type, creates today's log draft, and prints your brief: the session token and type, the `bookend:` label, the `log file:`, the unit, the `teach:` or `synthesis:` target, the `lesson:` file, the `next lesson:` title, any `resume-lesson:` line, the `callbacks:` cap and the `bring back` candidates, the last session and its `open question`, `asked recently`, `bank items used`, the `presented` record for each candidate, any `owed:` items, `read:` pointers, a `picture:` line, a `checkpoint:` line when one is due, and any `NOTE:`. Every line is an instruction; follow it. If you lose your context mid-lesson, `S resume` reprints this brief verbatim; read it and the draft before you say another word.
 
 If it errors, **stop and send the user nothing** — a broken course is an operator problem. Fix it only if it is an asset or lesson file you wrote. **One exception:** if the error says a session is already live and that lock is *yours* (you ran `begin` earlier in this conversation and were interrupted), nothing is broken: read the draft log, keep teaching from where its `## progress` says you were, and close as normal. Never run `begin` twice in one session.
 
@@ -59,7 +59,7 @@ The first turn is the bookend, the lesson's "Why this matters" (the hook, and ho
 
 **Resuming.** A `resume-lesson:` line means part of this lesson was delivered on an earlier day. Open with a two- or three-sentence recap of those sections (what they now know, not a list of headings), then carry on with the next section. Never re-teach or re-ask a delivered section.
 
-**Write for a phone.** Normal prose in short paragraphs; let the client wrap. Never hard-wrap lines. One message, under 4,000 characters. No source links hung on each figure: say where a number comes from in words when it matters ("CoreWeave's own filing"), and give a link only when they ask for one or when you have changed a figure from the lesson.
+**Write for a phone.** Normal prose in short paragraphs; let the client wrap. Never hard-wrap lines. One message, under 4,000 characters. Keep links out of lesson messages: say where a number comes from in words when it matters ("CoreWeave's own filing"), say so in words when you have updated a figure from the lesson, and give a link only when they ask for one.
 
 **No lesson file?** (An older course, or `lesson:` missing from the brief.) Build the lesson yourself before your first message: outline five to seven sections from the concept's definition, its worked example, its misconceptions and the unit's `sources/` notes, with a fair question after each, and teach it exactly as above. A concept is never taught in one paragraph.
 
@@ -91,7 +91,7 @@ The first turn is the bookend, the lesson's "Why this matters" (the hook, and ho
 
 1. **Answer their last reply** with substance, like every other turn.
 2. **Give them the model to keep** — the lesson's "model in one screen": four to six lines, each a full sentence. This is what they will reread.
-3. **Say goodnight** — two lines starting `Next time (<course>):`: a plain statement that today's lesson is done, and the open question as a teaser for the next one.
+3. **Say goodnight** — two lines starting `Next time (<course>):`: a plain statement that today's lesson is done, and the open question as a teaser. If the brief has a `next lesson:` line, the teaser is a doorway into that lesson.
 
 Everything after that is silent:
 
