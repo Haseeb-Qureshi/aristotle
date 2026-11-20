@@ -35,8 +35,8 @@ by this script. Mastery is DERIVED from interval and fails, never stored —
 there is no band to inflate.
 
 Test hooks: ARISTOTLE_TODAY (YYYY-MM-DD) pins "today"; ARISTOTLE_NOW pins
-the recovery clock; ARISTOTLE_REVIEW_PLAN ("none", "open:2", "exit:1",
-"split:2") pins a teaching session's review shape.
+the recovery clock; ARISTOTLE_REVIEW_PLAN ("none", "weave:1", "weave:2")
+pins how many callbacks a teaching session may use.
 """
 
 import argparse
@@ -723,7 +723,7 @@ def cmd_commit_grades(course: Path, logfile: Path, as_of=None):
 # ------------------------------------------------------------------ queue
 
 def build_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh",
-                exclude=()):
+                exclude=(), prefer=()):
     course = Path(course)
     meta, records = load_state(course)
     today = _today(course).isoformat()
@@ -768,14 +768,30 @@ def build_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh",
     out = []
     for i in range(max(len(first), len(second))):
         out += [r["id"] for r in (first[i:i + 1] + second[i:i + 1])]
+    # what today's lesson stands on comes first: a callback has to fit
+    out = [i for i in out if i in prefer] + [i for i in out if i not in prefer]
     return out[:cap]
 
 
+def _stands_on(course: Path, concepts):
+    """Every concept the given ones are built on (prerequisites, all the
+    way down) — the ones a lesson can call back without changing the
+    subject."""
+    cmap = parse_map(course)
+    seen, todo = set(), list(concepts)
+    while todo:
+        for pre in cmap.get(todo.pop(), {}).get("prereqs", []):
+            if pre not in seen:
+                seen.add(pre)
+                todo.append(pre)
+    return seen
+
+
 def cmd_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh",
-              exclude=()):
+              exclude=(), prefer=()):
     course = Path(course)
     ids = build_queue(course, cap=cap, terminal=terminal, lead=lead,
-                      exclude=exclude)
+                      exclude=exclude, prefer=prefer)
     meta, records = load_state(course)
     today = _today(course).isoformat()
     total_due = sum(1 for r in records.values()
@@ -1499,20 +1515,23 @@ def _repair_missing_taught(path: Path):
     path.write_text(text, encoding="utf-8")
 
 
-# Review shape for sessions that teach: (placement, items, weight). Drawn
-# per session from a hash of the token so two agents running begin for
-# the same session agree, yet sessions differ — the fixed "two items at
-# the open" became a ritual the learner called aggressive and repetitive.
-REVIEW_SHAPES = [("none", 0, 0.12), ("open", 1, 0.22), ("exit", 1, 0.22),
-                 ("open", 2, 0.18), ("split", 2, 0.26)]
+# Earlier concepts come back INSIDE the lesson, as callbacks, and only
+# where today's lesson stands on them. The first design quizzed one or
+# two unrelated concepts cold at the open and as an exit ticket; the
+# learner's verdict after 39 sessions was "jumping around and asking
+# questions for the sake of asking questions" (audits/lesson-first).
+# How many is still drawn per session from a hash of the token, so two
+# agents running begin for the same session agree, yet sessions differ.
+REVIEW_SHAPES = [("none", 0, 0.20), ("weave", 1, 0.45), ("weave", 2, 0.35)]
 REVIEW_LINES = {
-    "none": "review: none this session — due items roll forward",
-    "open": "review: {n} · at the open",
-    "exit": "review: {n} · as an exit ticket — ask it right before the "
-            "goodnight; it is part of the close",
-    "split": "review: {n} · one at the open, one as the exit ticket right "
-             "before the goodnight",
+    "none": "callbacks: none this session — the lesson stands alone; due "
+            "items roll forward",
+    "weave": "callbacks: at most {n}, and only where today's lesson stands "
+             "on one — never open with one, never change the subject to "
+             "ask one. Using none is fine.",
 }
+CALLBACK_POOL = 4         # candidates offered; the tutor uses at most n
+LEGACY_PLACES = {"open", "exit", "split"}   # pre-lesson-first log comments
 
 
 def _draw(course: Path, token: str, salt: str) -> float:
@@ -1520,27 +1539,23 @@ def _draw(course: Path, token: str, salt: str) -> float:
     return int(h.hexdigest()[:8], 16) / 2 ** 32
 
 
-# A big backlog needs more retrieval per session — at the light mean
-# (~1.3) an 18-session simulation of the live course never reached three
-# concepts (review, 2026-10-20) — but the learner asked for variety, an
-# occasional session with no review included. So a heavy backlog shifts
-# the weights (mean ~1.7) instead of removing the light shapes.
-HEAVY_BACKLOG = 4
 NEGLECT_RATIO = 2.0   # overdue by two of its own intervals = neglected
-HEAVY_SHAPES = [("none", 0, 0.07), ("exit", 1, 0.13), ("open", 2, 0.30),
-                ("split", 2, 0.50)]
 
 
 def review_plan(course: Path, token: str, previous, due: int = 0,
                 neglected: bool = False):
-    """(placement, n) for one teaching session. ARISTOTLE_REVIEW_PLAN
-    ('none', 'open:2', 'exit:1', ...) pins it — tests and operators."""
+    """(placement, n) for one teaching session: how many callbacks, at
+    most. ARISTOTLE_REVIEW_PLAN ('none', 'weave:2') pins it — tests and
+    operators; the old placements (open/exit/split) read as weave. A big
+    backlog no longer raises the count: more quizzing per lesson was the
+    complaint, and case studies are where neglected concepts return."""
     pinned = os.environ.get("ARISTOTLE_REVIEW_PLAN", "").strip()
     if pinned:
         place, _, n = pinned.partition(":")
+        if place in LEGACY_PLACES:
+            place = "weave"
         return (place, int(n or 0))
-    base = HEAVY_SHAPES if due >= HEAVY_BACKLOG else REVIEW_SHAPES
-    shapes = [s for s in base
+    shapes = [s for s in REVIEW_SHAPES
               if not ((previous == "none" or neglected) and s[0] == "none")]
     total = sum(w for _, _, w in shapes)
     x, acc = _draw(course, token, "shape") * total, 0.0
@@ -2227,7 +2242,9 @@ def cmd_begin(course: Path):
             for r in recs_now.values())
         plan = review_plan(course, token, _previous_review(course), due=due,
                            neglected=neglected)
-        d["cap"] = plan[1]
+        # the tutor uses at most plan[1]; a few candidates let it pick
+        # one the lesson really touches
+        d["cap"] = CALLBACK_POOL if plan[1] else 0
         lead = "backlog" if _draw(course, token, "lead") < 0.5 else "fresh"
     main_event = set()
     if d.get("concept"):
@@ -2235,7 +2252,11 @@ def cmd_begin(course: Path):
     if d["type"] == "teach-back" and d["unit"]:
         main_event |= set(d["unit"]["keystones"])
     ids = cmd_queue(course, cap=d["cap"], terminal=d["terminal"], lead=lead,
-                    exclude=main_event)
+                    exclude=main_event,
+                    prefer=_stands_on(course, main_event | {
+                        c for c in [_teach_target(course, d)] if c} | set(
+                        d["unit"]["concepts"] if d["type"] == "teach-back"
+                        and d["unit"] else ())))
     _, records = load_state(course)
     bookend = f"Session {d['index']}"
     if d["type"] == "catch-up":
@@ -2312,7 +2333,7 @@ def cmd_begin(course: Path):
             "continue with the next section.")
     if plan:
         lines.append(REVIEW_LINES[plan[0]].format(n=plan[1]))
-    lines.append(f"quiz these ({len(ids)}): {', '.join(ids) or '-'}")
+    lines.append(f"bring back ({len(ids)}): {', '.join(ids) or '-'}")
     # read only today's sections, not whole asset files (a catch-up brief
     # otherwise sent the tutor through ~90k characters before a word)
     for cid in dict.fromkeys([c for c in (target, d.get("concept")) if c]
@@ -2393,9 +2414,10 @@ def cmd_begin(course: Path):
     for n, cid, material in _owed_open(course):
         if cid in touched and cid not in offered:
             if not offered:
-                lines.append("owed — teach each briefly in a correction or "
-                             "in the lesson, then log a coverage line for "
-                             "that concept whose text starts `owed:`:")
+                lines.append("owed — when the lesson or a callback touches "
+                             "one of these concepts, include this in what "
+                             "you teach, then log a coverage line for that "
+                             "concept whose text starts `owed:`:")
             lines.append(f"owed: {cid} — {material}")
             offered.add(cid)
             owed_pins.append(str(n))

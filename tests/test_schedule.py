@@ -1056,7 +1056,7 @@ class TestBeginClose(CourseCase):
         out = S.cmd_begin(self.dir)
         self.assertIn("type: standard", out)
         self.assertIn("session: 2 of 10", out)
-        self.assertIn("quiz these", out)
+        self.assertIn("bring back", out)
         self.assertTrue((self.dir / S.SENTINEL).exists())
 
     def test_course_label_disambiguates_courses_in_one_chat(self):
@@ -1107,13 +1107,16 @@ class TestBeginClose(CourseCase):
         with self.assertRaises(S.IntegrityError):
             S.cmd_begin(self.dir)
 
-    def test_begin_caps_the_queue_by_session_type(self):
-        """A teaching session quizzes at most TEACHING_CAP due items —
-        4 due, cap 2 (since 2026-08-24): the rest roll forward."""
-        for cid in ("beta", "gamma", "delta"):
+    def test_a_lesson_brings_back_at_most_two(self):
+        """A teaching session offers a few due concepts as candidates and
+        caps how many the tutor may use at two (lesson-first, 2026-11):
+        callbacks serve the lesson, they are not a quiz block."""
+        for cid in ("gamma", "delta"):
             self.set_record(cid, status="active", next="2026-07-01")
-        self.assertIn(f"quiz these ({S.TEACHING_CAP})", S.cmd_begin(self.dir))
-        self.assertEqual(S.TEACHING_CAP, 2)
+        out = S.cmd_begin(self.dir)
+        self.assertIn("callbacks: at most 2", out)
+        self.assertIn("bring back (3)", out)       # alpha, gamma, delta
+        self.assertLessEqual(max(n for _, n, _ in S.REVIEW_SHAPES), 2)
 
     def test_begin_issues_a_fractional_token_for_a_repair(self):
         self.set_meta(**{"repair-pending": "alpha"})
@@ -1518,7 +1521,7 @@ class TestTaughtLedger(CourseCase):
     def test_an_empty_quiz_queue_prints_neither_block(self):
         self.set_record("alpha", next="2099-01-01")
         out = S.cmd_begin(self.dir)
-        self.assertIn("quiz these (0)", out)
+        self.assertIn("bring back (0)", out)
         self.assertNotIn("presented (", out)
         self.assertNotIn("banks spendable", out)
 
@@ -2049,7 +2052,7 @@ class TestVariedReview(CourseCase):
         out = S.cmd_begin(self.dir)
         self.assertIn("type: teach-back", out)
         self.assertIn("teach-back: alpha", out)
-        self.assertIn("quiz these (1)", out)
+        self.assertIn("bring back (1)", out)
 
     def test_plan_is_deterministic_per_token(self):
         self.assertEqual(S.review_plan(self.dir, "17", None),
@@ -2057,29 +2060,64 @@ class TestVariedReview(CourseCase):
 
     def test_plans_vary_and_none_is_occasional(self):
         shapes = [S.review_plan(self.dir, str(n), None) for n in range(400)]
-        self.assertGreaterEqual(len(set(shapes)), 5)
+        self.assertEqual(set(shapes),
+                         {("none", 0), ("weave", 1), ("weave", 2)})
         nones = sum(1 for s in shapes if s[0] == "none") / len(shapes)
-        self.assertTrue(0.05 < nones < 0.2, nones)
+        self.assertTrue(0.12 < nones < 0.28, nones)
         mean = sum(s[1] for s in shapes) / len(shapes)
-        self.assertTrue(1.1 < mean < 1.5, mean)
+        self.assertTrue(0.9 < mean < 1.35, mean)
 
     def test_none_never_twice_in_a_row(self):
         for n in range(400):
             self.assertNotEqual(S.review_plan(self.dir, str(n), "none")[0],
                                 "none")
 
-    def test_brief_states_the_shape_and_queues_that_many(self):
-        os.environ["ARISTOTLE_REVIEW_PLAN"] = "exit:1"
-        self.set_record("beta", status="active", next="2026-07-01")
+    def test_brief_caps_the_callbacks_and_offers_candidates(self):
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "weave:1"
         out = S.cmd_begin(self.dir)
-        self.assertIn("review: 1 · as an exit ticket", out)
-        self.assertIn("quiz these (1)", out)
+        self.assertIn("callbacks: at most 1", out)
+        self.assertIn("never open with one", out)
+        self.assertIn("bring back (1): alpha", out)
+
+    def test_an_old_placement_reads_as_a_callback(self):
+        """Logs and operator pins from before lesson-first say open, exit
+        or split; none of those placements exists any more."""
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "exit:1"
+        out = S.cmd_begin(self.dir)
+        self.assertIn("callbacks: at most 1", out)
+        self.assertNotIn("exit ticket", out)
+        self.assertNotIn("at the open", out)
 
     def test_a_none_session_queues_nothing(self):
         os.environ["ARISTOTLE_REVIEW_PLAN"] = "none"
         out = S.cmd_begin(self.dir)
-        self.assertIn("review: none", out)
-        self.assertIn("quiz these (0)", out)
+        self.assertIn("callbacks: none", out)
+        self.assertIn("bring back (0)", out)
+
+    def test_candidates_the_lesson_stands_on_come_first(self):
+        """delta is built on beta; gamma is not. With both due, a lesson
+        on delta is offered beta ahead of the longer-overdue gamma."""
+        self.settle("alpha")
+        self.add_u2_assets()
+        self.set_record("delta", status="untaught", next="-", last="-")
+        self.set_record("gamma", status="active", interval=16,
+                        last="2026-05-01", next="2026-05-17")
+        self.set_record("beta", status="active", interval=16,
+                        last="2026-07-01", next="2026-07-17")
+        self.set_record("alpha", status="active", next="2026-08-30")
+        S.write_plan_header(self.dir, {"next-session": "5/10"})
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "weave:2"
+        out = S.cmd_begin(self.dir)
+        self.assertIn("teach: delta", out)
+        self.assertIn("bring back (2): beta, gamma", out)
+
+    def test_a_backlog_does_not_raise_the_count(self):
+        os.environ.pop("ARISTOTLE_REVIEW_PLAN", None)
+        heavy = [S.review_plan(self.dir, str(n), None, due=12)
+                 for n in range(400)]
+        light = [S.review_plan(self.dir, str(n), None, due=1)
+                 for n in range(400)]
+        self.assertEqual(heavy, light)
 
     def test_the_previous_plan_comes_from_the_last_brief(self):
         os.environ["ARISTOTLE_REVIEW_PLAN"] = "none"
@@ -2103,17 +2141,17 @@ class TestVariedReview(CourseCase):
 
     def test_off_queue_grade_warns_at_close(self):
         self.git_init()
-        os.environ["ARISTOTLE_REVIEW_PLAN"] = "open:1"
-        self.set_record("beta", status="active", next="2026-07-01")
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "weave:1"
+        self.set_record("gamma", status="active", next="2026-08-30")
         S.cmd_begin(self.dir)
         draft = self.dir / "log" / f"{TODAY}-2.md"
         text = draft.read_text(encoding="utf-8").replace(
-            "## grades\n", "## grades\n- grade: alpha | result: pass | "
-            "note: off the brief\n- grade: beta | result: pass | note: ok\n")
+            "## grades\n", "## grades\n- grade: gamma | result: pass | "
+            "note: off the brief\n- grade: alpha | result: pass | note: ok\n")
         draft.write_text(text, encoding="utf-8")
         out = S.cmd_close(self.dir, draft)
         self.assertIn("warn:", out)
-        self.assertIn("alpha", out.split("warn:")[1])
+        self.assertIn("gamma", out.split("warn:")[1])
 
 
 class TestOwedMaterial(CourseCase):
@@ -2176,18 +2214,6 @@ class TestSecondReview(CourseCase):
 
     def at(self, n):
         S.write_plan_header(self.dir, {"next-session": f"{n}/10"})
-
-    # 1. review density follows the backlog
-    def test_a_big_backlog_draws_heavier_but_still_varied(self):
-        os.environ.pop("ARISTOTLE_REVIEW_PLAN", None)
-        heavy = [S.review_plan(self.dir, str(n), None, due=12)
-                 for n in range(400)]
-        mean = sum(n for _, n in heavy) / len(heavy)
-        self.assertTrue(1.6 < mean < 1.9, mean)
-        self.assertIn(("none", 0), heavy)      # variety survives
-        light = [S.review_plan(self.dir, str(n), None, due=1)
-                 for n in range(400)]
-        self.assertLess(sum(n for _, n in light) / 400, mean)
 
     # 2. a graded draft orphaned by the went-quiet path is not lost
     def test_begin_banks_an_unclosed_graded_draft_with_no_lock(self):
@@ -2315,7 +2341,7 @@ class TestSecondReview(CourseCase):
         os.environ["ARISTOTLE_REVIEW_PLAN"] = "open:2"
         self.at(3)
         out = S.cmd_begin(self.dir)
-        quiz = [l for l in out.splitlines() if l.startswith("quiz these")][0]
+        quiz = [l for l in out.splitlines() if l.startswith("bring back")][0]
         self.assertNotIn("alpha", quiz)
 
     # 12. review sessions build fresh cases: no bank line
@@ -2413,7 +2439,7 @@ class TestThirdReview(CourseCase):
         self.at(11)
         out = S.cmd_begin(self.dir)
         self.assertIn("type: graduation", out)
-        self.assertNotIn("quiz these", out)
+        self.assertNotIn("bring back", out)
         self.assertFalse((self.dir / S.SENTINEL).exists())
         self.assertIn("left untaught", out)      # named, not hidden
 
