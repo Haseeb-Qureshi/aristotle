@@ -1438,6 +1438,26 @@ class TestAskedLedger(CourseCase):
         self.assertEqual(out.lower().count("alpha.q1"), 2)  # 1 recent + 1 bank
         self.assertIn("bank items used", out)
 
+    def test_the_ledger_shown_to_a_lesson_is_bounded(self):
+        """The live course's brief opened a lesson with ~50 long case
+        signatures from a month of catch-up quizzing (2026-11): pages of
+        old quiz cases are the wrong thing to read before teaching. The
+        newest few, clipped, are enough to avoid repeating one."""
+        long_case = "a very long case signature " * 20
+        self.asked_log("2026-07-19-3.md", "3",
+                       *[f"case {i} {long_case}" for i in range(30)])
+        out = S.cmd_begin(self.dir)
+        shown = [l for l in out.splitlines() if l.startswith("  [3] case")]
+        self.assertEqual(len(shown), S.ASKED_SHOWN)
+        self.assertTrue(all(len(l) <= S.ASKED_CLIP + 12 for l in shown))
+        self.assertIn(f"({30 - S.ASKED_SHOWN} older not shown)", out)
+
+    def test_a_lesson_with_no_callbacks_is_not_shown_the_ledger(self):
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "none"
+        self.asked_log("2026-07-19-3.md", "3", "some old case")
+        out = S.cmd_begin(self.dir)
+        self.assertNotIn("asked recently", out)
+
     def test_begin_is_quiet_without_asked_history(self):
         self.write_log("2026-07-18-2.md",
                        log_text("2", ("alpha", "pass", "x"), extra="hook"))
@@ -2559,10 +2579,14 @@ class TestFourthReview(CourseCase):
                               r"\(rubric alpha\)")
         self.assertIn("alpha [1]: the first thing shown", out)
 
-    def test_standard_brief_points_at_the_interleaved_set(self):
-        out = S.cmd_begin(self.dir)
-        self.assertRegex(out, r"read: assets/unit-01\.md lines \d+-\d+ "
-                              r"\(interleaved\)")
+    def test_only_a_case_study_is_pointed_at_the_mixed_problems(self):
+        self.assertNotIn("(interleaved)", S.cmd_begin(self.dir))
+        (self.dir / S.SENTINEL).unlink()
+        self.set_record("beta", status="active", next="2026-08-30")
+        self.at(3)
+        self.assertRegex(S.cmd_begin(self.dir),
+                         r"read: assets/unit-01\.md lines \d+-\d+ "
+                         r"\(interleaved\)")
 
     # the brief survives a context loss
     def test_resume_reprints_the_live_brief(self):

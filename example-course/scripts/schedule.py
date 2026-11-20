@@ -79,6 +79,8 @@ STALE_HOURS = 2           # a sentinel younger than this means a session is LIVE
 DORMANT_DAYS = 14
 MIN_CONSOLIDATION = 1     # reserved at the end for the terminal synthesis
 ASKED_RECENCY = 3         # how many logs back `begin` replays asked items
+ASKED_SHOWN = 12          # ...and how many of those a brief prints,
+ASKED_CLIP = 160          # each clipped to this many characters
 DATE_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
 
 
@@ -2266,7 +2268,7 @@ def cmd_begin(course: Path):
             # say the truth at the exact moment the confusion forms
             lines.append("  untaught means untaught — whatever you remember "
                          "mentioning about these, the learner has not been "
-                         "taught them; teach from the worked example.")
+                         "taught them; teach the lesson from its start.")
         # what this session teaches, with the domain map's definition: the
         # def line is the core a `taught` grade asserts was presented
         target = None
@@ -2325,7 +2327,9 @@ def cmd_begin(course: Path):
         sec = _asset_section(course, k, kind="rubric")
         if sec:
             lines.append(f"read: {sec[0]} lines {sec[1]}-{sec[2]} (rubric {k})")
-    if d["type"] in ("standard", "catch-up") and d["unit"] and not backs_now:
+    # mixed problems are raw material for a case study; a lesson is one
+    # idea and no longer ends on one
+    if d["type"] == "case-study" and d["unit"]:
         sec = _asset_section(course, "", kind="interleaved",
                              unit_file=f"assets/unit-{d['unit']['num']:02d}.md")
         if sec:
@@ -2353,10 +2357,17 @@ def cmd_begin(course: Path):
         if question:
             lines.append(f"open question: {question}")
     asked, bank = _asked_history(course)
-    if asked:
-        lines.append("asked recently (do not reuse — a new case means a "
-                     "new decision and inference chain, not new names):")
-        lines += [f"  [{tok}] {item}" for tok, item in asked]
+    if asked and ids:
+        # only a session that may bring something back needs the ledger,
+        # and only enough of it to avoid repeating a case
+        lines.append("asked recently (a callback must be a different case, "
+                     "not one of these reworded):")
+        lines += [f"  [{tok}] "
+                  + (item if len(item) <= ASKED_CLIP
+                     else item[:ASKED_CLIP - 1].rstrip() + "…")
+                  for tok, item in asked[:ASKED_SHOWN]]
+        if len(asked) > ASKED_SHOWN:
+            lines.append(f"  ({len(asked) - ASKED_SHOWN} older not shown)")
     if bank:
         lines.append("bank items used (single-use, never repeat): "
                      + ", ".join(bank))
