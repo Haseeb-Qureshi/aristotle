@@ -2014,12 +2014,15 @@ class TestCoverageIsAUnitCondition(CourseCase):
         self.assertEqual(S.parse_plan(self.dir)[1][0]["status"], "taught")
         self.assertIn("type: standard", S.cmd_begin(self.dir))
 
-    def test_ended_unit_without_a_teach_back_owes_one(self):
+    def test_an_ungraded_unit_end_session_is_not_owed(self):
+        """It was, until a month of the live course went to catch-up
+        teach-backs — question-only sessions on August's concepts —
+        while one new concept was taught (lesson-first, 2026-11)."""
         self.set_record("beta", status="active", next="2026-08-01")
         self.at(4)
         out = S.cmd_begin(self.dir)
-        self.assertIn("type: catch-up", out)
-        self.assertIn("teach-back: alpha", out)
+        self.assertIn("type: standard", out)
+        self.assertEqual(S.owed_items(self.dir), [])
 
     def test_any_rubric_grade_settles_the_teach_back(self):
         self.set_record("beta", status="active", next="2026-08-01")
@@ -2240,15 +2243,18 @@ class TestSecondReview(CourseCase):
         never got graded at all still closes, with a warning."""
         self.git_init()
         self.set_record("beta", status="active", next="2026-07-01")
-        self.at(4)
-        os.environ["ARISTOTLE_REVIEW_PLAN"] = "open:1"
+        self.at(3)
+        os.environ["ARISTOTLE_REVIEW_PLAN"] = "weave:1"
         S.cmd_begin(self.dir)
-        p = self.dir / "log" / f"{TODAY}-4r.md"   # keep begin's brief
+        p = self.dir / "log" / f"{TODAY}-3.md"    # keep begin's brief
         p.write_text(p.read_text(encoding="utf-8").replace(
             "## grades\n", "## grades\n- grade: beta | result: pass | "
             "note: review only\n"), encoding="utf-8")
         out = S.cmd_close(self.dir, p)
-        self.assertIn("teach-back", out.split("warn:", 1)[-1])
+        self.assertIn("keystone goes ungraded", out.split("warn:", 1)[-1])
+        # and nothing is owed for it: the course moves on
+        self.add_u2_assets()
+        self.assertNotIn("catch-up", S.cmd_begin(self.dir))
 
     # 4. "asked recently" spans sessions, not files
     def test_recent_asks_span_three_sessions_not_three_files(self):
@@ -2370,9 +2376,9 @@ class TestThirdReview(CourseCase):
     def test_close_refuses_a_non_rubric_grade_on_a_briefed_teach_back(self):
         self.git_init()
         self.set_record("beta", status="active", next="2026-08-30")
-        self.at(4)
+        self.at(3)
         S.cmd_begin(self.dir)
-        draft = self.dir / "log" / f"{TODAY}-4r.md"
+        draft = self.dir / "log" / f"{TODAY}-3.md"
         draft.write_text(draft.read_text(encoding="utf-8").replace(
             "## grades\n", "## grades\n- grade: alpha | result: pass | "
             "note: x\n"), encoding="utf-8")
@@ -2462,9 +2468,9 @@ class TestThirdReview(CourseCase):
 
     # 8. catch-ups say where they are in the run
     def test_catch_up_brief_carries_a_bookend_label(self):
-        self.at(4)   # beta untaught + alpha never teach-backed: 2 owed
+        self.at(4)   # beta was never taught: the one thing owed
         out = S.cmd_begin(self.dir)
-        self.assertIn("bookend: Session 4 · catch-up 1 of 2", out)
+        self.assertIn("bookend: Session 4 · catch-up 1 of 1", out)
 
     # 9. the checkpoint is surfaced, not left to arithmetic
     def test_checkpoint_due_is_printed(self):
@@ -2547,7 +2553,7 @@ class TestFourthReview(CourseCase):
         self.set_record("beta", status="active", next="2026-08-30")
         self.write_log("2026-07-18-1.md", "session: 1\n\n## taught\n"
                        "- alpha: the first thing shown\n")
-        self.at(4)
+        self.at(3)
         out = S.cmd_begin(self.dir)
         self.assertRegex(out, r"read: assets/unit-01\.md lines \d+-\d+ "
                               r"\(rubric alpha\)")

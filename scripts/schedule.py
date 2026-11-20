@@ -1361,10 +1361,8 @@ def dispatch(course: Path):
         o = owed[0]
         out["type"], out["unit"] = "catch-up", o["unit"]
         out["owed"], out["concept"] = o["kind"], o["concept"]
-        out["why"] = (f"unit {o['unit']['num']} ended owing "
-                      + ("a first teaching of " if o["kind"] == "teach"
-                         else "a graded teach-back of ")
-                      + f"{o['concept']} — {len(owed)} owed item(s) in all")
+        out["why"] = (f"unit {o['unit']['num']} ended with {o['concept']} "
+                      f"never taught — {len(owed)} such concept(s) in all")
         return out
 
     here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
@@ -1642,43 +1640,24 @@ def _tick_owed(course: Path, pins, text: str):
 PRESENTED_SHOWN = 3
 
 
-def _rubric_evidence(course: Path, committed):
-    """Concepts with any teach-back grade in a committed log."""
-    out = set()
-    for path in sorted((Path(course) / "log").glob("*.md")):
-        text = _read(path)
-        if _log_token(path, text) not in committed:
-            continue
-        try:
-            _, grades = parse_log_grades(text)
-        except (FormatError, IntegrityError):
-            continue
-        out |= {g["id"] for g in grades if g["result"].startswith("rubric")}
-    return out
-
-
 def owed_items(course: Path):
-    """What units whose slots have all passed still owe — derived from
-    state on every call, so it can never drift and vanishes the moment
-    the evidence lands. Whole concepts first (in unit order), then
-    teach-backs: a keystone is owed one when its unit ended without any
-    rubric grade. (Live course, 2026-10: unit 4 ended with neocloud-model
-    untaught; units 2-4 ended with no graded teach-back.)"""
+    """Concepts a unit left untaught when its slots ran out — derived
+    from state on every call, so it can never drift and vanishes the
+    moment the concept is taught. Each gets a catch-up session: an
+    ordinary lesson that consumes no plan slot.
+
+    A unit-end session that was never rubric-graded is NOT owed. It used
+    to be: the live course spent a month of sittings (2026-10/11) on
+    catch-up teach-backs of concepts first taught in August — sessions
+    made only of questions — while one new concept was taught."""
     course = Path(course)
     header, units = parse_plan(course)
-    meta, records = load_state(course)
+    _, records = load_state(course)
     idx = session_index(header)
     ended = [u for u in units if u.get("num") is not None and u["end"] < idx]
-    teach = [{"kind": "teach", "concept": c, "unit": u}
-             for u in ended for c in u["concepts"]
-             if records.get(c, {}).get("status") == "untaught"]
-    graded = _rubric_evidence(course, meta["committed-sessions"])
-    backs = [{"kind": "teach-back", "concept": k, "unit": u}
-             for u in ended for k in u["keystones"]
-             if k in records
-             and records[k]["status"] not in ("untaught", "dropped")
-             and k not in graded]
-    return teach + backs
+    return [{"kind": "teach", "concept": c, "unit": u}
+            for u in ended for c in u["concepts"]
+            if records.get(c, {}).get("status") == "untaught"]
 
 
 def _log_date(path: Path, course: Path) -> str:
@@ -2205,8 +2184,6 @@ def cmd_begin(course: Path):
         if d["type"] == "graduation":
             _, recs = load_state(course)
             left = [c for c, r in recs.items() if r["status"] == "untaught"]
-            left += [f"teach-back of {o['concept']}" for o in owed_items(course)
-                     if o["kind"] == "teach-back"]
             lines.append("left untaught: " + (", ".join(left) or "-"))
             unpaid = [f"{c} — {m}" for _, c, m in _owed_open(course)]
             if unpaid:
@@ -2296,8 +2273,7 @@ def cmd_begin(course: Path):
             target = d["concept"]
         elif d["type"] == "standard" and untaught:
             target = untaught[0]
-        backs = ([d["concept"]] if d.get("owed") == "teach-back"
-                 else u["keystones"] if d["type"] == "teach-back" else [])
+        backs = u["keystones"] if d["type"] == "teach-back" else []
         for k in backs:
             lines.append(f"teach-back: {k} — grade against its "
                          f"## rubric block in assets/unit-{u['num']:02d}.md")
@@ -2341,8 +2317,7 @@ def cmd_begin(course: Path):
         sec = _asset_section(course, cid)
         if sec:
             lines.append(f"read: {sec[0]} lines {sec[1]}-{sec[2]} ({cid})")
-    backs_now = ([d["concept"]] if d.get("owed") == "teach-back" else
-                 list(d["unit"]["keystones"]) if d["type"] == "teach-back"
+    backs_now = (list(d["unit"]["keystones"]) if d["type"] == "teach-back"
                  and d["unit"] else [])
     for k in backs_now:
         sec = _asset_section(course, k, kind="rubric")
@@ -2465,8 +2440,6 @@ def cmd_begin(course: Path):
         backs_due = []
         if d["type"] == "teach-back" and d["unit"]:
             backs_due = list(d["unit"]["keystones"])
-        elif d.get("owed") == "teach-back":
-            backs_due = [d["concept"]]
         teach += backs_due
         brief = (f"review={'none' if plan and plan[1] == 0 else f'{plan[0]}:{plan[1]}' if plan else '-'} "
                  f"quiz={','.join(ids) or '-'} "
@@ -2511,8 +2484,8 @@ def cmd_close(course: Path, logfile: Path, _resume=False):
                 warnings.append(
                     f"warn: the brief set a teach-back of {k} but it got "
                     f"{results.get(k, 'no grade')!r}, not rubric-pass/"
-                    "rubric-fail — the teach-back stays owed and will come "
-                    "back next session.")
+                    "rubric-fail — the keystone goes ungraded this unit "
+                    "(nothing is owed for it).")
         if off:
             warnings.append(
                 f"warn: graded {', '.join(off)} but the brief queued "
