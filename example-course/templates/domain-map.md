@@ -23,7 +23,7 @@ sessions: 30
      threshold yes for the 5-8 gateway concepts that reframe the field.
                `reprune` refuses to drop them, so tag deliberately.
      misconceptions  Mn ids are machine-form: quiz distractors and
-               teach-back rubrics reference them and `check` verifies it.
+               case-study rubrics reference them and `check` verifies it.
                Every KEYSTONE needs at least one, or its rubric has
                nothing to warn against.
 

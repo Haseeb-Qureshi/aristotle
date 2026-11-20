@@ -48,6 +48,15 @@
      it under `without:`: over-claiming coverage fails a learner for your
      elision; under-claiming only makes future questions more generous.
 
+     '## progress' is the lesson's bookmark — append each lesson
+     section's heading the moment you have delivered it:
+
+       - 2. Why the write premium pays
+
+     If the learner stops mid-lesson, these lines are what the next
+     sitting resumes from (`begin` prints them as `resume-lesson:`), so
+     an unlisted section gets taught again and a listed one never does.
+
      '## asked' is the question ledger — one line per question you posed,
      matched case-insensitively. A bank item is its id: <concept>.q2,
      <concept>.apply1, <concept>.int1 (position in the assets file, from
@@ -57,6 +66,10 @@
      next session re-asks your questions and calls it retrieval.
 -->
 session: N
+
+## progress
+- 1. Why this matters
+- 2. The cost curve, one number at a time
 
 ## taught
 - concept-c: worked example, the cost curve | without: the 2025 teardown

@@ -35,8 +35,8 @@ by this script. Mastery is DERIVED from interval and fails, never stored —
 there is no band to inflate.
 
 Test hooks: ARISTOTLE_TODAY (YYYY-MM-DD) pins "today"; ARISTOTLE_NOW pins
-the recovery clock; ARISTOTLE_REVIEW_PLAN ("none", "open:2", "exit:1",
-"split:2") pins a teaching session's review shape.
+the recovery clock; ARISTOTLE_REVIEW_PLAN ("none", "weave:1", "weave:2")
+pins how many callbacks a teaching session may use.
 """
 
 import argparse
@@ -723,11 +723,11 @@ def cmd_commit_grades(course: Path, logfile: Path, as_of=None):
 # ------------------------------------------------------------------ queue
 
 def build_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh",
-                exclude=()):
+                exclude=(), prefer=()):
     course = Path(course)
     meta, records = load_state(course)
     today = _today(course).isoformat()
-    # a session's own teach/teach-back target is its main event, never also
+    # a session's own teach/synthesis target is its main event, never also
     # a review item: the tutor would grade it twice and close would refuse
     live = [r for r in records.values()
             if r["status"] == "active" and r["verify"] != "none"
@@ -768,14 +768,30 @@ def build_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh",
     out = []
     for i in range(max(len(first), len(second))):
         out += [r["id"] for r in (first[i:i + 1] + second[i:i + 1])]
+    # what today's lesson stands on comes first: a callback has to fit
+    out = [i for i in out if i in prefer] + [i for i in out if i not in prefer]
     return out[:cap]
 
 
+def _stands_on(course: Path, concepts):
+    """Every concept the given ones are built on (prerequisites, all the
+    way down) — the ones a lesson can call back without changing the
+    subject."""
+    cmap = parse_map(course)
+    seen, todo = set(), list(concepts)
+    while todo:
+        for pre in cmap.get(todo.pop(), {}).get("prereqs", []):
+            if pre not in seen:
+                seen.add(pre)
+                todo.append(pre)
+    return seen
+
+
 def cmd_queue(course: Path, cap=QUEUE_CAP, terminal=False, lead="fresh",
-              exclude=()):
+              exclude=(), prefer=()):
     course = Path(course)
     ids = build_queue(course, cap=cap, terminal=terminal, lead=lead,
-                      exclude=exclude)
+                      exclude=exclude, prefer=prefer)
     meta, records = load_state(course)
     today = _today(course).isoformat()
     total_due = sum(1 for r in records.values()
@@ -1155,7 +1171,7 @@ def cmd_check(course: Path):
                     f"unit {unit['num']}: keystone {cid!r} is not one of "
                     "the unit's own concepts")
 
-    # the course must FIT: one session per concept, plus a teach-back,
+    # the course must FIT: one session per concept, plus the case study,
     # plus the terminal synthesis session at the end
     size = course_size(header)
     for unit in units:
@@ -1169,7 +1185,7 @@ def cmd_check(course: Path):
                 f"unit {unit['num']} has {len(unit['concepts'])} concepts "
                 f"but only {unit['sessions']} sessions — needs >={floor} "
                 "(one per concept at <=1 new concept/session, plus the "
-                "teach-back)")
+                "unit's case study)")
     total = sum(u["sessions"] for u in units)
     if total > size - MIN_CONSOLIDATION:
         raise IntegrityError(
@@ -1266,6 +1282,19 @@ def course_warnings(course: Path):
         out.append("templates/log.md missing — the close step checks the "
                    "session log against it.")
 
+    # once a course teaches from lesson files, an authored unit with an
+    # untaught concept and no lesson would be taught from one paragraph
+    if (course / LESSON_DIR).is_dir():
+        _, records = load_state(course)
+        for u in real:
+            if not assets_path(course, u["num"]).exists():
+                continue
+            for c in u["concepts"]:
+                if records.get(c, {}).get("status") == "untaught" \
+                        and not _lesson_path(course, c):
+                    out.append(f"{LESSON_DIR}/{c}.md is missing: {c} is "
+                               "untaught and has no lesson to teach from.")
+
     # a `- visual:` asset line promises a rendered image; a dangling one
     # would make the tutor send a broken MEDIA path mid-lesson
     for path in sorted((course / "assets").glob("unit-*.md")):
@@ -1332,10 +1361,8 @@ def dispatch(course: Path):
         o = owed[0]
         out["type"], out["unit"] = "catch-up", o["unit"]
         out["owed"], out["concept"] = o["kind"], o["concept"]
-        out["why"] = (f"unit {o['unit']['num']} ended owing "
-                      + ("a first teaching of " if o["kind"] == "teach"
-                         else "a graded teach-back of ")
-                      + f"{o['concept']} — {len(owed)} owed item(s) in all")
+        out["why"] = (f"unit {o['unit']['num']} ended with {o['concept']} "
+                      f"never taught — {len(owed)} such concept(s) in all")
         return out
 
     here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
@@ -1364,13 +1391,14 @@ def dispatch(course: Path):
     left = [c for c in here["concepts"]
             if records.get(c, {}).get("status") == "untaught"]
     if idx == here["end"] and left:
-        # coverage before ritual: the keystone's teach-back is owed instead
+        # coverage before ritual: the lesson outranks the unit's case study
         out["type"] = "standard"
         out["why"] = (f"last slot of unit {here['num']}, but {left[0]} is "
-                      "still untaught — teach it; the teach-back is owed")
+                      "still untaught — teach it instead of the case study")
     elif idx == here["end"]:
-        out["type"], out["cap"] = "teach-back", QUEUE_CAP
-        out["why"] = f"last session of unit {here['num']}"
+        out["type"], out["cap"] = "case-study", QUEUE_CAP
+        out["why"] = (f"last session of unit {here['num']} — a real case, "
+                      "taught, with the unit's concepts doing the work")
     else:
         out["type"] = "standard"
         out["why"] = f"session {idx - here['start'] + 1} of unit {here['num']}"
@@ -1486,20 +1514,23 @@ def _repair_missing_taught(path: Path):
     path.write_text(text, encoding="utf-8")
 
 
-# Review shape for sessions that teach: (placement, items, weight). Drawn
-# per session from a hash of the token so two agents running begin for
-# the same session agree, yet sessions differ — the fixed "two items at
-# the open" became a ritual the learner called aggressive and repetitive.
-REVIEW_SHAPES = [("none", 0, 0.12), ("open", 1, 0.22), ("exit", 1, 0.22),
-                 ("open", 2, 0.18), ("split", 2, 0.26)]
+# Earlier concepts come back INSIDE the lesson, as callbacks, and only
+# where today's lesson stands on them. The first design quizzed one or
+# two unrelated concepts cold at the open and as an exit ticket; the
+# learner's verdict after 39 sessions was "jumping around and asking
+# questions for the sake of asking questions" (audits/lesson-first).
+# How many is still drawn per session from a hash of the token, so two
+# agents running begin for the same session agree, yet sessions differ.
+REVIEW_SHAPES = [("none", 0, 0.20), ("weave", 1, 0.45), ("weave", 2, 0.35)]
 REVIEW_LINES = {
-    "none": "review: none this session — due items roll forward",
-    "open": "review: {n} · at the open",
-    "exit": "review: {n} · as an exit ticket — ask it right before the "
-            "goodnight; it is part of the close",
-    "split": "review: {n} · one at the open, one as the exit ticket right "
-             "before the goodnight",
+    "none": "callbacks: none this session — the lesson stands alone; due "
+            "items roll forward",
+    "weave": "callbacks: at most {n}, and only where today's lesson stands "
+             "on one — never open with one, never change the subject to "
+             "ask one. Using none is fine.",
 }
+CALLBACK_POOL = 4         # candidates offered; the tutor uses at most n
+LEGACY_PLACES = {"open", "exit", "split"}   # pre-lesson-first log comments
 
 
 def _draw(course: Path, token: str, salt: str) -> float:
@@ -1507,27 +1538,23 @@ def _draw(course: Path, token: str, salt: str) -> float:
     return int(h.hexdigest()[:8], 16) / 2 ** 32
 
 
-# A big backlog needs more retrieval per session — at the light mean
-# (~1.3) an 18-session simulation of the live course never reached three
-# concepts (review, 2026-10-20) — but the learner asked for variety, an
-# occasional session with no review included. So a heavy backlog shifts
-# the weights (mean ~1.7) instead of removing the light shapes.
-HEAVY_BACKLOG = 4
 NEGLECT_RATIO = 2.0   # overdue by two of its own intervals = neglected
-HEAVY_SHAPES = [("none", 0, 0.07), ("exit", 1, 0.13), ("open", 2, 0.30),
-                ("split", 2, 0.50)]
 
 
 def review_plan(course: Path, token: str, previous, due: int = 0,
                 neglected: bool = False):
-    """(placement, n) for one teaching session. ARISTOTLE_REVIEW_PLAN
-    ('none', 'open:2', 'exit:1', ...) pins it — tests and operators."""
+    """(placement, n) for one teaching session: how many callbacks, at
+    most. ARISTOTLE_REVIEW_PLAN ('none', 'weave:2') pins it — tests and
+    operators; the old placements (open/exit/split) read as weave. A big
+    backlog no longer raises the count: more quizzing per lesson was the
+    complaint, and case studies are where neglected concepts return."""
     pinned = os.environ.get("ARISTOTLE_REVIEW_PLAN", "").strip()
     if pinned:
         place, _, n = pinned.partition(":")
+        if place in LEGACY_PLACES:
+            place = "weave"
         return (place, int(n or 0))
-    base = HEAVY_SHAPES if due >= HEAVY_BACKLOG else REVIEW_SHAPES
-    shapes = [s for s in base
+    shapes = [s for s in REVIEW_SHAPES
               if not ((previous == "none" or neglected) and s[0] == "none")]
     total = sum(w for _, _, w in shapes)
     x, acc = _draw(course, token, "shape") * total, 0.0
@@ -1614,43 +1641,24 @@ def _tick_owed(course: Path, pins, text: str):
 PRESENTED_SHOWN = 3
 
 
-def _rubric_evidence(course: Path, committed):
-    """Concepts with any teach-back grade in a committed log."""
-    out = set()
-    for path in sorted((Path(course) / "log").glob("*.md")):
-        text = _read(path)
-        if _log_token(path, text) not in committed:
-            continue
-        try:
-            _, grades = parse_log_grades(text)
-        except (FormatError, IntegrityError):
-            continue
-        out |= {g["id"] for g in grades if g["result"].startswith("rubric")}
-    return out
-
-
 def owed_items(course: Path):
-    """What units whose slots have all passed still owe — derived from
-    state on every call, so it can never drift and vanishes the moment
-    the evidence lands. Whole concepts first (in unit order), then
-    teach-backs: a keystone is owed one when its unit ended without any
-    rubric grade. (Live course, 2026-10: unit 4 ended with neocloud-model
-    untaught; units 2-4 ended with no graded teach-back.)"""
+    """Concepts a unit left untaught when its slots ran out — derived
+    from state on every call, so it can never drift and vanishes the
+    moment the concept is taught. Each gets a catch-up session: an
+    ordinary lesson that consumes no plan slot.
+
+    A unit-end session that was never rubric-graded is NOT owed. It used
+    to be: the live course spent a month of sittings (2026-10/11) on
+    catch-up teach-backs of concepts first taught in August — sessions
+    made only of questions — while one new concept was taught."""
     course = Path(course)
     header, units = parse_plan(course)
-    meta, records = load_state(course)
+    _, records = load_state(course)
     idx = session_index(header)
     ended = [u for u in units if u.get("num") is not None and u["end"] < idx]
-    teach = [{"kind": "teach", "concept": c, "unit": u}
-             for u in ended for c in u["concepts"]
-             if records.get(c, {}).get("status") == "untaught"]
-    graded = _rubric_evidence(course, meta["committed-sessions"])
-    backs = [{"kind": "teach-back", "concept": k, "unit": u}
-             for u in ended for k in u["keystones"]
-             if k in records
-             and records[k]["status"] not in ("untaught", "dropped")
-             and k not in graded]
-    return teach + backs
+    return [{"kind": "teach", "concept": c, "unit": u}
+            for u in ended for c in u["concepts"]
+            if records.get(c, {}).get("status") == "untaught"]
 
 
 def _log_date(path: Path, course: Path) -> str:
@@ -1735,10 +1743,21 @@ def cmd_pointer(course: Path):
         kind = dispatch(course)["type"]
     except (FormatError, IntegrityError):
         kind = "?"
-    return "\n".join([f"session: {header['next-session']}",
-                      f"course-status: {header['course-status']}",
-                      f"type: {kind}",
-                      f"open-question: {q or '-'}"])
+    lines = [f"session: {header['next-session']}",
+             f"course-status: {header['course-status']}",
+             f"type: {kind}",
+             f"open-question: {q or '-'}"]
+    try:
+        d = dispatch(course)
+        key = _lesson_key(course, d, _teach_target(course, d))
+        done = [s for _, secs in _lesson_progress(course, key) for s in secs]
+    except (FormatError, IntegrityError, KeyError):
+        done = []
+    if done:
+        # the nudge should invite them back INTO the lesson, not past it
+        lines.append(f"in-progress: {key} — {len(done)} section(s) "
+                     f"delivered, last: {done[-1]}")
+    return "\n".join(lines)
 
 
 def _asset_section(course: Path, cid: str, kind: str = "concept",
@@ -1783,7 +1802,9 @@ def _bank_orphans(course: Path):
                                  as_of=_log_date(path, course)) != "applied":
                 continue
         except (FormatError, IntegrityError):
-            continue   # no grades: a declined session, nothing to bank
+            # no grades: declined, or a lesson paused part-way
+            _note_attendance(course, path)
+            continue
         header = parse_plan(course)[0]
         write_plan_header(course, {
             "sessions-done": int(header["sessions-done"]) + 1,
@@ -1874,16 +1895,129 @@ def cmd_recover(course: Path):
     for rel in untracked:
         path = course / rel
         body = _read(path) if path.is_file() else ""
-        if not any(_section(body, h).strip() for h in
-                   (TAUGHT_HEAD_RE, ASKED_HEAD_RE,
-                    re.compile(r"^##+\s*grades\s*$", re.M | re.I))):
+        if not _holds_something(body):
             path.unlink()
     for f in (BRIEF_FILE,):
         if (course / f).exists():
             (course / f).unlink()
     if sentinel.exists():
         sentinel.unlink()
+    if logs and logs[-1].is_file():
+        _note_attendance(course, logs[-1])
     return "reset"
+
+
+# ------------------------------------------------------------- lessons
+# A session is a lesson taught from a file, not a paragraph between quiz
+# items (audits/lesson-first). The key names the file and, later, lets
+# an interrupted lesson be picked up where it stopped.
+LESSON_DIR = "lessons"
+
+
+def _lesson_key(course: Path, d: dict, target):
+    """The lesson this session teaches: a concept id, `unit-NN-case` for
+    a unit's last session, `review-NN` for the review block after unit
+    NN, `final` for the closing synthesis. None when it teaches none."""
+    kind = d["type"]
+    if kind == "repair":
+        return d.get("concept")
+    if kind in ("standard", "catch-up") and target:
+        return target
+    if kind == "case-study" and d.get("unit"):
+        return f"unit-{d['unit']['num']:02d}-case"
+    if kind == "consolidation":
+        return "final"
+    if kind == "review":
+        _, units = parse_plan(course)
+        before = [u["num"] for u in units if u.get("num") is not None
+                  and u["end"] < d["index"]]
+        return f"review-{before[-1]:02d}" if before else None
+    return None
+
+
+PROGRESS_HEAD_RE = re.compile(r"^##+\s*progress\s*$", re.M | re.I)
+GRADES_HEAD_RE = re.compile(r"^##+\s*grades\s*$", re.M | re.I)
+CLOSED_STAMP = "<!-- closed -->"
+
+
+def _progress_items(text: str):
+    """Lesson sections a draft records as delivered ('## progress')."""
+    return [ln.strip()[2:].strip()
+            for ln in _section(text, PROGRESS_HEAD_RE).splitlines()
+            if ln.strip().startswith("- ") and ln.strip()[2:].strip()]
+
+
+def _holds_something(text: str) -> bool:
+    """A draft is debris only if nothing was taught, asked, graded or
+    delivered in it."""
+    return any(_section(text, h).strip() for h in
+               (TAUGHT_HEAD_RE, ASKED_HEAD_RE, GRADES_HEAD_RE,
+                PROGRESS_HEAD_RE))
+
+
+def _lesson_progress(course: Path, key):
+    """[(date, [sections])] for sittings of lesson `key` that never
+    reached a close, oldest first. A closed lesson is finished: `close`
+    stamps every sitting of it, so a later repair starts from the top."""
+    out = []
+    if not key:
+        return out
+    for path in sorted((Path(course) / "log").glob("*.md")):
+        text = _read(path)
+        if CLOSED_STAMP in text or _brief_comment(text).get("lesson") != key:
+            continue
+        done = _progress_items(text)
+        if done:
+            out.append((_log_date(path, course), done))
+    return out
+
+
+def _stamp_closed(course: Path, logfile: Path, key):
+    """Mark this log, and every unfinished sitting of the same lesson,
+    as closed. Idempotent."""
+    paths = {Path(logfile).resolve()}
+    if key and key != "-":
+        paths |= {q.resolve() for q in (Path(course) / "log").glob("*.md")
+                  if _brief_comment(_read(q)).get("lesson") == key}
+    for q in sorted(paths):
+        text = _read(q)
+        if CLOSED_STAMP in text:
+            continue
+        head, sep, rest = text.partition("\n")
+        _write(q, f"{head}\n{CLOSED_STAMP}\n{rest}" if sep
+               else f"{text}\n{CLOSED_STAMP}\n")
+
+
+def _teach_target(course: Path, d: dict):
+    """The concept a session teaches for the first time, if any."""
+    if d["type"] == "catch-up":
+        return d.get("concept")
+    if d["type"] == "standard" and d.get("unit"):
+        _, records = load_state(course)
+        left = [c for c in d["unit"]["concepts"]
+                if records[c]["status"] == "untaught"]
+        return left[0] if left else None
+    return None
+
+
+def _note_attendance(course: Path, path: Path):
+    """A sitting that delivered part of a lesson and graded nothing is
+    still the learner showing up: move last-attended, nothing else."""
+    if not _progress_items(_read(path)):
+        return
+    header = parse_plan(course)[0]
+    date = _log_date(path, course)
+    if header["last-attended"] == "-" or date > header["last-attended"]:
+        write_plan_header(course, {"last-attended": date,
+                                   "re-entry-pending": "no"})
+        _commit(course, "recover: a lesson paused mid-way")
+
+
+def _lesson_path(course: Path, key):
+    """Course-relative path of a lesson file, or None if not authored."""
+    if key and (Path(course) / LESSON_DIR / f"{key}.md").is_file():
+        return f"{LESSON_DIR}/{key}.md"
+    return None
 
 
 # ------------------------------------------------------------ begin / close
@@ -2051,8 +2185,6 @@ def cmd_begin(course: Path):
         if d["type"] == "graduation":
             _, recs = load_state(course)
             left = [c for c, r in recs.items() if r["status"] == "untaught"]
-            left += [f"teach-back of {o['concept']}" for o in owed_items(course)
-                     if o["kind"] == "teach-back"]
             lines.append("left untaught: " + (", ".join(left) or "-"))
             unpaid = [f"{c} — {m}" for _, c, m in _owed_open(course)]
             if unpaid:
@@ -2073,7 +2205,7 @@ def cmd_begin(course: Path):
 
     plan = None
     lead = "fresh"
-    if d["type"] in ("standard", "catch-up", "teach-back"):
+    if d["type"] in ("standard", "catch-up", "case-study"):
         _, recs_now = load_state(course)
         today_iso = _today(course).isoformat()
         due = sum(1 for r in recs_now.values()
@@ -2088,15 +2220,21 @@ def cmd_begin(course: Path):
             for r in recs_now.values())
         plan = review_plan(course, token, _previous_review(course), due=due,
                            neglected=neglected)
-        d["cap"] = plan[1]
+        # the tutor uses at most plan[1]; a few candidates let it pick
+        # one the lesson really touches
+        d["cap"] = CALLBACK_POOL if plan[1] else 0
         lead = "backlog" if _draw(course, token, "lead") < 0.5 else "fresh"
     main_event = set()
     if d.get("concept"):
         main_event.add(d["concept"])
-    if d["type"] == "teach-back" and d["unit"]:
+    if d["type"] == "case-study" and d["unit"]:
         main_event |= set(d["unit"]["keystones"])
     ids = cmd_queue(course, cap=d["cap"], terminal=d["terminal"], lead=lead,
-                    exclude=main_event)
+                    exclude=main_event,
+                    prefer=_stands_on(course, main_event | {
+                        c for c in [_teach_target(course, d)] if c} | set(
+                        d["unit"]["concepts"] if d["type"] == "case-study"
+                        and d["unit"] else ())))
     _, records = load_state(course)
     bookend = f"Session {d['index']}"
     if d["type"] == "catch-up":
@@ -2136,11 +2274,11 @@ def cmd_begin(course: Path):
             target = d["concept"]
         elif d["type"] == "standard" and untaught:
             target = untaught[0]
-        backs = ([d["concept"]] if d.get("owed") == "teach-back"
-                 else u["keystones"] if d["type"] == "teach-back" else [])
+        backs = u["keystones"] if d["type"] == "case-study" else []
         for k in backs:
-            lines.append(f"teach-back: {k} — grade against its "
-                         f"## rubric block in assets/unit-{u['num']:02d}.md")
+            lines.append(f"synthesis: {k} — grade their closing read of "
+                         "the case against its ## rubric block in "
+                         f"assets/unit-{u['num']:02d}.md")
         if target and not backs:
             dfn = parse_map(course).get(target, {}).get("def", "")
             lines.append(f"teach: {target}" + (f" — {dfn}" if dfn else ""))
@@ -2158,9 +2296,22 @@ def cmd_begin(course: Path):
                             f"{target}'s coverage line")
         if u["artifact"] and u["artifact"] != "none":
             lines.append(f"artifact-milestone: {u['artifact']}")
+    lesson_key = _lesson_key(course, d, target)
+    lesson = _lesson_path(course, lesson_key)
+    if lesson:
+        lines.append(f"lesson: {lesson} — the session's script; teach it "
+                     "section by section")
+    sittings = _lesson_progress(course, lesson_key)
+    if sittings:
+        done = list(dict.fromkeys(s for _, secs in sittings for s in secs))
+        lines.append(
+            f"resume-lesson: this lesson was started on {sittings[0][0]} "
+            f"and already delivered: {'; '.join(done)}. Do not re-teach or "
+            "re-ask those. Recap them in two or three sentences, then "
+            "continue with the next section.")
     if plan:
         lines.append(REVIEW_LINES[plan[0]].format(n=plan[1]))
-    lines.append(f"quiz these ({len(ids)}): {', '.join(ids) or '-'}")
+    lines.append(f"bring back ({len(ids)}): {', '.join(ids) or '-'}")
     # read only today's sections, not whole asset files (a catch-up brief
     # otherwise sent the tutor through ~90k characters before a word)
     for cid in dict.fromkeys([c for c in (target, d.get("concept")) if c]
@@ -2168,8 +2319,7 @@ def cmd_begin(course: Path):
         sec = _asset_section(course, cid)
         if sec:
             lines.append(f"read: {sec[0]} lines {sec[1]}-{sec[2]} ({cid})")
-    backs_now = ([d["concept"]] if d.get("owed") == "teach-back" else
-                 list(d["unit"]["keystones"]) if d["type"] == "teach-back"
+    backs_now = (list(d["unit"]["keystones"]) if d["type"] == "case-study"
                  and d["unit"] else [])
     for k in backs_now:
         sec = _asset_section(course, k, kind="rubric")
@@ -2212,7 +2362,7 @@ def cmd_begin(course: Path):
                      + ", ".join(bank))
 
     # --- coverage: what these concepts were actually SHOWN ------------
-    # (the session's own teach-back target too: its grade must be fair)
+    # (the session's own synthesis target too: its grade must be fair)
     covered_ids = list(dict.fromkeys(ids + backs_now))
     if covered_ids:
         taught = _taught_history(course)
@@ -2241,14 +2391,17 @@ def cmd_begin(course: Path):
     for n, cid, material in _owed_open(course):
         if cid in touched and cid not in offered:
             if not offered:
-                lines.append("owed — teach each briefly in a correction or "
-                             "in the lesson, then log a coverage line for "
-                             "that concept whose text starts `owed:`:")
+                lines.append("owed — when the lesson or a callback touches "
+                             "one of these concepts, include this in what "
+                             "you teach, then log a coverage line for that "
+                             "concept whose text starts `owed:`:")
             lines.append(f"owed: {cid} — {material}")
             offered.add(cid)
             owed_pins.append(str(n))
 
-    if state == "reset" and abandoned_age is not None:
+    if sittings:
+        pass          # resume-lesson above says what happened and what to do
+    elif state == "reset" and abandoned_age is not None:
         hrs = int(abandoned_age.total_seconds() // 3600)
         lines.append(
             f"NOTE: a session was started ~{hrs}h ago and abandoned before "
@@ -2277,10 +2430,7 @@ def cmd_begin(course: Path):
     for old in (course / "log").glob("*.md"):
         if old == draft:
             continue
-        body = _read(old)
-        if not any(_section(body, h).strip() for h in
-                   (TAUGHT_HEAD_RE, ASKED_HEAD_RE, re.compile(
-                       r"^##+\s*grades\s*$", re.M | re.I))):
+        if not _holds_something(_read(old)):
             old.unlink()
     _ignore_runtime_files(course)
     _write(course / BRIEF_FILE, "\n".join(lines))
@@ -2290,19 +2440,18 @@ def cmd_begin(course: Path):
         # grade (session 33's PPA probe was on a concept nobody queued)
         teach = [c for c in (target, d.get("concept")) if c]
         backs_due = []
-        if d["type"] == "teach-back" and d["unit"]:
+        if d["type"] == "case-study" and d["unit"]:
             backs_due = list(d["unit"]["keystones"])
-        elif d.get("owed") == "teach-back":
-            backs_due = [d["concept"]]
         teach += backs_due
         brief = (f"review={'none' if plan and plan[1] == 0 else f'{plan[0]}:{plan[1]}' if plan else '-'} "
                  f"quiz={','.join(ids) or '-'} "
                  f"teach={','.join(dict.fromkeys(teach)) or '-'} "
                  f"owed={','.join(owed_pins) or '-'} "
-                 f"back={','.join(backs_due) or '-'}")
+                 f"back={','.join(backs_due) or '-'} "
+                 f"lesson={lesson_key or '-'}")
         draft.write_text(
             f"session: {token}\n<!-- brief: {brief} -->\n\n"
-            "## taught\n\n## grades\n\n## asked\n\n"
+            "## progress\n\n## taught\n\n## grades\n\n## asked\n\n"
             "## open question\n", encoding="utf-8")
     return "\n".join(lines)
 
@@ -2335,10 +2484,10 @@ def cmd_close(course: Path, logfile: Path, _resume=False):
         for k in [x for x in brief.get("back", "-").split(",") if x != "-"]:
             if not results.get(k, "").startswith("rubric"):
                 warnings.append(
-                    f"warn: the brief set a teach-back of {k} but it got "
+                    f"warn: this case study's synthesis on {k} got "
                     f"{results.get(k, 'no grade')!r}, not rubric-pass/"
-                    "rubric-fail — the teach-back stays owed and will come "
-                    "back next session.")
+                    "rubric-fail — the keystone goes ungraded this unit "
+                    "(nothing is owed for it).")
         if off:
             warnings.append(
                 f"warn: graded {', '.join(off)} but the brief queued "
@@ -2356,9 +2505,10 @@ def cmd_close(course: Path, logfile: Path, _resume=False):
                 f"the live session is {held!r} but this log says {session!r} "
                 "— refusing to close someone else's session")
 
-    # a teach-back is settled only by a rubric grade; anything else would
-    # leave it owed and re-dispatch it forever, so the live tutor fixes the
-    # log now (recovery paths stay lenient: losing evidence is worse)
+    # a case study's synthesis is graded against the rubric or not at
+    # all: a plain pass/fail would move the keystone's interval on a
+    # standard it was never held to, so the live tutor fixes the log now
+    # (recovery paths stay lenient: losing evidence is worse)
     try:
         results = {g["id"]: g["result"] for g in parse_log_grades(text)[1]}
     except (FormatError, IntegrityError):
@@ -2366,13 +2516,15 @@ def cmd_close(course: Path, logfile: Path, _resume=False):
     for k in [x for x in brief.get("back", "-").split(",") if x != "-"]:
         if k in results and not results[k].startswith("rubric"):
             raise IntegrityError(
-                f"log error: this session was a teach-back of {k}, graded "
-                f"{results[k]!r} — a teach-back is graded rubric-pass or "
-                "rubric-fail against its ## rubric block. Fix the grade line "
-                "and close again.")
+                f"log error: this session was the case study whose synthesis "
+                f"is {k}, graded {results[k]!r} — a synthesis is graded "
+                "rubric-pass or rubric-fail against its ## rubric block. "
+                "Fix the grade line and close again.")
     journal = course / CLOSE_JOURNAL
     rel = os.path.relpath(Path(logfile).resolve(), Path(course).resolve())
     _write(journal, f"session: {session}\nlog: {rel}\n")
+    # a closed lesson is finished: no later sitting resumes it
+    _stamp_closed(course, logfile, brief.get("lesson"))
     applied = cmd_commit_grades(course, logfile,
                                 as_of=_log_date(logfile, course))
     if applied == "applied" or _resume:

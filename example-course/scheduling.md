@@ -71,10 +71,15 @@ Runs unattended on the cadence. Its whole job, in order:
    and check your own message history so you don't double-send.
 5. **Otherwise send ONE message, 1–2 sentences**: the session number and
    the open question as a hook. That open question is the whole reason
-   the previous session wrote one.
+   the previous session wrote one. If `pointer` prints `in-progress:`,
+   a lesson is part-way through: invite them back into it instead, by
+   subject, never by section number.
 
-> "Session 7 whenever you have 15 minutes — we left off on why the
+> "Session 7 whenever you have 25 minutes — we left off on why the
 > cheapest chip in the rack is the one nobody can buy. Reply to start."
+
+> "We're midway through session 7, on why batching makes serving cheap
+> — pick it back up whenever you have ten minutes."
 
 Never put script output, file paths, concept ids, or grades in a nudge.
 
@@ -91,6 +96,15 @@ the empty draft `begin` created** (header and section heads, no grade
 lines). A draft that already holds grades needs no reconstruction —
 `recover` replays it as it stands; reconstruction is for recovering what
 the draft never received.
+
+**A lesson that stopped part-way is not a missed close.** Lessons run
+twenty to thirty minutes and learners stop in the middle; the draft's
+`## progress` lines are the bookmark and the next sitting resumes from
+them (`begin` prints `resume-lesson:`). Do not grade or close such a
+draft. If history shows the tutor delivered sections the draft does not
+list, append their headings to `## progress` so the resume is accurate,
+then go straight to `recover`. Reconstruct-and-close, below, is only for
+a lesson whose **last** section was delivered and never closed.
 
 If your platform can search past conversations, reconstruct rather than
 discard. **Sessions are bookended for exactly this** (`SKILL.md` §2):
@@ -114,8 +128,8 @@ So the search is deterministic, not a guess about topic words:
    `<!-- brief: ... teach=<id> -->` line names** — never `pass`, `fail`
    or `rubric-*`, and never `taught` on any other concept (it would reset
    that concept's schedule). You did not witness the retrieval, so you
-   may not award evidence. A teach-back (`back=` in the brief) gets no
-   grade at all: it stays owed. Note "reconstructed" in each grade line.
+   may not award evidence. A case study's synthesis (`back=` in the
+   brief) gets no grade at all. Note "reconstructed" in each grade line.
 4. Run `schedule.py close` on it.
 
 Then continue to `recover` as normal. If no lesson is found, do nothing
@@ -213,15 +227,19 @@ is in this prompt — do not explore. Course dir: $C (it exists).
    If it is older than 2 hours and its token's log is missing or has no
    grade lines (begin writes an empty draft at the start): search
    conversation history for the last "Session N" marker with no
-   "Next time:" after it; if one is found, complete that draft (format:
+   "Next time:" after it. A lesson that stopped part-way is NOT closed:
+   add any delivered section headings the draft's `## progress` is
+   missing and go to step 3 — it resumes next time. Only if the lesson's
+   last section was delivered: complete that draft (format:
    $C/templates/log.md; `taught` only for the brief's teach= concept,
    note "reconstructed"), then run
    python3 $C/scripts/schedule.py --course $C close $C/log/<file>
 3. python3 $C/scripts/schedule.py --course $C recover
    (if it prints "locked": respond [silent] and stop)
 4. Run python3 $C/scripts/schedule.py --course $C pointer — it prints
-   session N/M, course-status, the effective session type and the open
-   question. Read nothing else.
+   session N/M, course-status, the effective session type, the open
+   question, and `in-progress:` when a lesson is part-way through. Read
+   nothing else.
 5. Overwrite <assistant working dir>/<course>-next.md with the pointer
    block from "Orientation" above.
 6. By the pointer's `type:` — `dormant` or status `paused`: follow
@@ -229,7 +247,9 @@ is in this prompt — do not explore. Course dir: $C (it exists).
    `graduation`: one message offering the capstone; status `closed`:
    respond [silent]; `maintenance`: nudge a review at its cadence.
 7. Otherwise your reply IS the nudge: 1-2 sentences, session number +
-   open question as a hook. No paths, no ids, no script output.
+   open question as a hook — or, if the pointer printed `in-progress:`,
+   an invitation back into that lesson by its subject. No paths, no ids,
+   no script output.
 ```
 
 **Assistant standing instructions** (its always-loaded config):
@@ -241,9 +261,12 @@ When the user replies to a lesson nudge, or asks for the lesson:
 0. Orient from <course>-next.md. Do not search.
 1. Read SKILL.md in the course dir — it is the full procedure and
    overrides anything here. Then run `schedule.py ... begin`.
-2. Teach per SKILL.md. ONE new concept. Short messages.
-3. Close per SKILL.md §4 — after ~6-10 exchanges, without waiting for
-   the user to say goodbye. Silent. Keep chatting afterwards if they do.
+2. Teach the lesson per SKILL.md §2, in full: one section per message,
+   each message mostly teaching (120-250 words), one question at its
+   end. ONE new concept per session.
+3. Close per SKILL.md §4 once the lesson's last section is done, without
+   waiting for the user to say goodbye. If they stop part-way, leave it:
+   the next sitting resumes. Keep chatting afterwards if they do.
 ```
 
 That is the entire integration: one cron prompt, one paragraph of
