@@ -1686,16 +1686,13 @@ def owed_items(course: Path):
     owed = [{"kind": "teach", "concept": c, "unit": u}
             for u in ended for c in u["concepts"]
             if records.get(c, {}).get("status") == "untaught"]
-    # a re-teach lesson is a detour, so it runs between units and never
-    # in the middle of one: the unit under way keeps its thread
-    here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
-    mid_unit = (here is not None and here.get("num") is not None
-                and idx > here["start"])
-    if not mid_unit:
-        for c in reteach_list(header):
-            u = unit_of_concept(units, c)
-            if u and records.get(c, {}).get("status") != "untaught":
-                owed.append({"kind": "reteach", "concept": c, "unit": u})
+    # a re-teach runs at the very next session, even inside a unit: it
+    # is listed because the learner wants it now, and a unit lesson left
+    # part-way keeps its progress and resumes after the detour
+    for c in reteach_list(header):
+        u = unit_of_concept(units, c)
+        if u and records.get(c, {}).get("status") != "untaught":
+            owed.append({"kind": "reteach", "concept": c, "unit": u})
     return owed
 
 

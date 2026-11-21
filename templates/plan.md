@@ -11,8 +11,9 @@
      Optional, authored by hand:
        re-teach          concept ids already taught that are owed a full
                          lesson (taught too thinly the first time). Each
-                         runs as a catch-up lesson between units, never
-                         mid-unit; `S close` takes it off the list.
+                         runs as a catch-up lesson at the next session,
+                         ahead of the plan (a unit lesson left part-way
+                         resumes after); `S close` takes it off the list.
      Session ranges are NOT stored — they are derived from the `sessions:`
      counts, so fractional repair sessions (17r) never force renumbering.
 -->

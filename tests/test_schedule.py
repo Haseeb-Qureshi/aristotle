@@ -2984,6 +2984,36 @@ class TestLessonResume(CourseCase):
         self.assertIn("resume-lesson:", out)
         self.assertIn("1. why beta", out)
 
+    def test_a_re_teach_that_cuts_in_leaves_the_lesson_its_place(self):
+        """The live course asked for its re-teach lessons one session
+        into a unit. The unit lesson's sections stay delivered and it
+        resumes once the detour is closed."""
+        self.first_sitting("1. why beta")
+        (self.dir / S.SENTINEL).unlink()
+        plan = self.dir / "plan.md"
+        plan.write_text(plan.read_text("utf-8").replace(
+            "re-entry-pending: no\n",
+            "re-entry-pending: no\nre-teach: alpha\n", 1), encoding="utf-8")
+        S._commit(self.dir, "plan: re-teach alpha")
+        os.environ["ARISTOTLE_TODAY"] = "2026-07-23"
+        out = S.cmd_begin(self.dir)
+        self.assertIn("session: 2r of", out)
+        self.assertIn("teach: alpha", out)
+        self.assertNotIn("resume-lesson:", out)
+        detour = self.dir / "log" / "2026-07-23-2r.md"
+        detour.write_text(
+            detour.read_text("utf-8")
+            .replace("## taught\n", "## taught\n- alpha: the whole lesson\n")
+            .replace("## grades\n", "## grades\n- grade: alpha | result: "
+                     "taught | note: lesson complete\n"), encoding="utf-8")
+        S.cmd_close(self.dir, detour)
+        self.assertIn("in-progress: beta — 1 section(s)",
+                      S.cmd_pointer(self.dir))
+        out = S.cmd_begin(self.dir)
+        self.assertIn("session: 2 of", out)
+        self.assertIn("resume-lesson:", out)
+        self.assertIn("1. why beta", out)
+
     def test_a_sitting_that_only_made_progress_still_counts_as_attending(self):
         """Or a learner working through a long lesson a section a day is
         declared dormant in the middle of it."""
@@ -3046,7 +3076,9 @@ class TestReteach(CourseCase):
     (2026-11) and with them the only route back to two keystones that
     had been 'taught' in a paragraph; the learner asked for them back
     as lessons. `re-teach:` in the plan header lists such concepts. Each
-    runs as a catch-up lesson between units, never in the middle of one."""
+    runs as a catch-up lesson at the very next session, ahead of the plan:
+    the first version made them wait for a unit boundary, and the learner
+    asked for them the next day, one session into a unit."""
 
     def setUp(self):
         super().setUp()
@@ -3075,12 +3107,13 @@ class TestReteach(CourseCase):
         self.at(4)
         self.assertEqual(S.owed_items(self.dir), [])
 
-    def test_it_waits_while_a_unit_is_under_way(self):
+    def test_it_runs_next_even_inside_a_unit(self):
         self.reteach("alpha")
-        self.at(2)                         # unit 1 runs 1-3
-        self.assertNotEqual(S.dispatch(self.dir)["type"], "catch-up")
-        self.at(5)                         # unit 2 runs 4-6
-        self.assertNotEqual(S.dispatch(self.dir)["type"], "catch-up")
+        for n in (2, 5):                   # units run 1-3 and 4-6
+            self.at(n)
+            d = S.dispatch(self.dir)
+            self.assertEqual((d["type"], d["owed"], d["concept"]),
+                             ("catch-up", "reteach", "alpha"), n)
 
     def test_it_runs_as_a_full_lesson_between_units(self):
         self.reteach("alpha")
