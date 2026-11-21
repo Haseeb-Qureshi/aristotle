@@ -3130,6 +3130,23 @@ class TestReteach(CourseCase):
         self.assertIn("re-teach:", out)
         self.assertNotIn("next lesson:", out)
 
+    def test_the_pointer_names_the_lesson_that_is_next(self):
+        # the nudge's hook is the last session's open question, which
+        # leads into the plan's next lesson, not into this detour
+        self.reteach("alpha")
+        self.at(5)
+        (self.dir / "lessons").mkdir()
+        (self.dir / "lessons" / "alpha.md").write_text(
+            "# alpha, properly\n\n## 1. first\ntext\n", encoding="utf-8")
+        out = S.cmd_pointer(self.dir)
+        self.assertIn("type: catch-up", out)
+        self.assertIn("lesson: alpha, properly", out)
+
+    def test_the_pointer_has_no_lesson_line_without_a_lesson_file(self):
+        self.reteach("alpha")
+        self.at(5)
+        self.assertNotIn("lesson:", S.cmd_pointer(self.dir))
+
     def test_closing_it_takes_it_off_the_list_and_moves_no_counter(self):
         self.reteach("alpha", "beta")
         self.at(4)

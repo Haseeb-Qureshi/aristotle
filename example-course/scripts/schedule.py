@@ -1802,12 +1802,22 @@ def cmd_pointer(course: Path):
              f"course-status: {header['course-status']}",
              f"type: {kind}",
              f"open-question: {q or '-'}"]
+    title = None
     try:
         d = dispatch(course)
         key = _lesson_key(course, d, _teach_target(course, d))
         done = [s for _, secs in _lesson_progress(course, key) for s in secs]
+        rel = _lesson_path(course, key)
+        if rel:
+            m = re.search(r"^# (.+)$", _read(course / rel), re.M)
+            title = m.group(1).strip() if m else None
     except (FormatError, IntegrityError, KeyError):
         done = []
+    if title:
+        # what the next sitting teaches. The open question above leads
+        # into the plan's next lesson, so a nudge for a detour (a
+        # catch-up) needs this to name the right subject
+        lines.append(f"lesson: {title}")
     if done:
         # the nudge should invite them back INTO the lesson, not past it
         lines.append(f"in-progress: {key} — {len(done)} section(s) "

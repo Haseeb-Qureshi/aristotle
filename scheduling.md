@@ -73,7 +73,8 @@ Runs unattended on the cadence. Its whole job, in order:
    the open question as a hook. That open question is the whole reason
    the previous session wrote one. If `pointer` prints `in-progress:`,
    a lesson is part-way through: invite them back into it instead, by
-   subject, never by section number.
+   subject, never by section number. If `type:` is `catch-up`, the open
+   question leads somewhere else: hook on the `lesson:` title instead.
 
 > "Session 7 whenever you have 25 minutes — we left off on why the
 > cheapest chip in the rack is the one nobody can buy. Reply to start."
@@ -238,7 +239,8 @@ is in this prompt — do not explore. Course dir: $C (it exists).
    (if it prints "locked": respond [silent] and stop)
 4. Run python3 $C/scripts/schedule.py --course $C pointer — it prints
    session N/M, course-status, the effective session type, the open
-   question, and `in-progress:` when a lesson is part-way through. Read
+   question, `lesson:` (the title of the lesson the next sitting
+   teaches) and `in-progress:` when a lesson is part-way through. Read
    nothing else.
 5. Overwrite <assistant working dir>/<course>-next.md with the pointer
    block from "Orientation" above.
@@ -248,8 +250,9 @@ is in this prompt — do not explore. Course dir: $C (it exists).
    respond [silent]; `maintenance`: nudge a review at its cadence.
 7. Otherwise your reply IS the nudge: 1-2 sentences, session number +
    open question as a hook — or, if the pointer printed `in-progress:`,
-   an invitation back into that lesson by its subject. No paths, no ids,
-   no script output.
+   an invitation back into that lesson by its subject. If `type:` is
+   `catch-up`, hook on the `lesson:` title, not the open question. No
+   paths, no ids, no script output.
 ```
 
 **Assistant standing instructions** (its always-loaded config):
