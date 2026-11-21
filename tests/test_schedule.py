@@ -3040,5 +3040,130 @@ class TestLessonResume(CourseCase):
         self.assertNotIn("in-progress:", S.cmd_pointer(self.dir))
 
 
+class TestReteach(CourseCase):
+    """A concept taught too thinly the first time can be given its full
+    lesson later. The live course dropped its question-only catch-ups
+    (2026-11) and with them the only route back to two keystones that
+    had been 'taught' in a paragraph; the learner asked for them back
+    as lessons. `re-teach:` in the plan header lists such concepts. Each
+    runs as a catch-up lesson between units, never in the middle of one."""
+
+    def setUp(self):
+        super().setUp()
+        self.settle()                      # every concept already taught
+
+    def at(self, n):
+        S.write_plan_header(self.dir, {"next-session": f"{n}/10"})
+
+    def reteach(self, *ids):
+        p = self.dir / "plan.md"
+        p.write_text(p.read_text("utf-8").replace(
+            "re-entry-pending: no\n",
+            f"re-entry-pending: no\nre-teach: {', '.join(ids)}\n", 1),
+            encoding="utf-8")
+
+    def finish(self, token, cid):
+        draft = self.dir / "log" / f"{TODAY}-{token}.md"
+        draft.write_text(
+            draft.read_text("utf-8")
+            .replace("## taught\n", f"## taught\n- {cid}: the whole lesson\n")
+            .replace("## grades\n", f"## grades\n- grade: {cid} | result: "
+                     "taught | note: lesson complete\n"), encoding="utf-8")
+        return draft
+
+    def test_a_plan_without_the_field_owes_nothing(self):
+        self.at(4)
+        self.assertEqual(S.owed_items(self.dir), [])
+
+    def test_it_waits_while_a_unit_is_under_way(self):
+        self.reteach("alpha")
+        self.at(2)                         # unit 1 runs 1-3
+        self.assertNotEqual(S.dispatch(self.dir)["type"], "catch-up")
+        self.at(5)                         # unit 2 runs 4-6
+        self.assertNotEqual(S.dispatch(self.dir)["type"], "catch-up")
+
+    def test_it_runs_as_a_full_lesson_between_units(self):
+        self.reteach("alpha")
+        self.at(4)
+        (self.dir / "lessons").mkdir()
+        (self.dir / "lessons" / "alpha.md").write_text(
+            "# alpha, properly\n\n## 1. first\ntext\n", encoding="utf-8")
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: catch-up", out)
+        self.assertIn("session: 4r of", out)
+        self.assertIn("bookend: Session 4 · catch-up 1 of 1", out)
+        self.assertIn("teach: alpha", out)
+        self.assertIn("lesson: lessons/alpha.md", out)
+        self.assertIn("re-teach:", out)
+        self.assertNotIn("next lesson:", out)
+
+    def test_closing_it_takes_it_off_the_list_and_moves_no_counter(self):
+        self.reteach("alpha", "beta")
+        self.at(4)
+        self.git_init()
+        S.cmd_begin(self.dir)
+        S.cmd_close(self.dir, self.finish("4r", "alpha"))
+        header = S.parse_plan(self.dir)[0]
+        self.assertEqual(header["next-session"], "4/10")
+        self.assertEqual(S.reteach_list(header), ["beta"])
+        out = S.cmd_begin(self.dir)
+        self.assertIn("teach: beta", out)
+        self.assertIn("catch-up 2 of 2", out)
+        S.cmd_close(self.dir, self.finish("4r2", "beta"))
+        self.assertEqual(S.reteach_list(S.parse_plan(self.dir)[0]), [])
+        self.assertIn("type: standard", S.cmd_begin(self.dir))
+
+    def test_a_concept_never_taught_comes_first(self):
+        self.set_record("beta", status="untaught", next="-")
+        self.reteach("alpha")
+        self.at(4)
+        self.assertEqual([o["concept"] for o in S.owed_items(self.dir)],
+                         ["beta", "alpha"])
+
+    def test_a_lesson_recovered_without_its_close_still_settles(self):
+        self.reteach("alpha")
+        self.at(4)
+        self.git_init()
+        S.cmd_begin(self.dir)
+        self.finish("4r", "alpha")
+        p = self.dir / S.SENTINEL
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+        S.cmd_recover(self.dir)
+        self.assertEqual(S.reteach_list(S.parse_plan(self.dir)[0]), [])
+
+    def test_an_unfinished_one_stays_on_the_list(self):
+        self.reteach("alpha")
+        self.at(4)
+        self.git_init()
+        S.cmd_begin(self.dir)
+        draft = self.dir / "log" / f"{TODAY}-4r.md"
+        draft.write_text(draft.read_text("utf-8").replace(
+            "## progress\n", "## progress\n- 1. first\n"), encoding="utf-8")
+        p = self.dir / S.SENTINEL
+        old = (dt.datetime.now() - dt.timedelta(hours=5)).timestamp()
+        os.utime(p, (old, old))
+        out = S.cmd_begin(self.dir)
+        self.assertIn("type: catch-up", out)
+        self.assertIn("resume-lesson:", out)
+
+    def test_check_refuses_an_id_the_map_does_not_have(self):
+        self.reteach("omega")
+        with self.assertRaises(S.IntegrityError) as cm:
+            S.cmd_check(self.dir)
+        self.assertIn("omega", str(cm.exception))
+
+    def test_check_refuses_a_concept_not_yet_taught(self):
+        self.set_record("delta", status="untaught", next="-")
+        self.reteach("delta")
+        with self.assertRaises(S.IntegrityError):
+            S.cmd_check(self.dir)
+
+    def test_it_never_preempts_the_final_session(self):
+        self.reteach("alpha")
+        self.at(10)
+        self.assertNotEqual(S.dispatch(self.dir)["type"], "catch-up")
+
+
 if __name__ == "__main__":
     unittest.main()

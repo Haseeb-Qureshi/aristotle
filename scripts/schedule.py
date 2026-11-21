@@ -335,6 +335,15 @@ UNIT_RE = re.compile(r"^Unit (\d+):\s*(.*)$")
 REVIEW_RE = re.compile(r"^Review(?:\s+\d+)?:\s*(.*)$", re.I)
 PLAN_HEADER_FIELDS = ["course-status", "next-session", "cadence",
                       "sessions-done", "last-attended", "re-entry-pending"]
+# optional: concepts already taught that are owed a full lesson (taught
+# too thinly the first time). Authored by hand; `close` takes each off
+# the list when its lesson is done.
+RETEACH_FIELD = "re-teach"
+
+
+def reteach_list(header) -> list:
+    return [c for c in re.split(r"[,\s]+", header.get(RETEACH_FIELD, ""))
+            if c and c != "-"]
 
 
 def parse_plan(course: Path):
@@ -344,7 +353,7 @@ def parse_plan(course: Path):
     header = {}
     for line in text.split("\n## ", 1)[0].splitlines():
         k, sep, v = line.partition(":")
-        if sep and k.strip() in PLAN_HEADER_FIELDS:
+        if sep and k.strip() in PLAN_HEADER_FIELDS + [RETEACH_FIELD]:
             header[k.strip()] = v.strip()
     missing = [f for f in PLAN_HEADER_FIELDS if f not in header]
     if missing:
@@ -1172,6 +1181,16 @@ def cmd_check(course: Path):
                 raise IntegrityError(
                     f"unit {unit['num']}: keystone {cid!r} is not one of "
                     "the unit's own concepts")
+    for cid in reteach_list(header):
+        if cid not in concepts or not unit_of_concept(units, cid):
+            raise IntegrityError(
+                f"plan header re-teach: {cid!r} is not a concept of any "
+                "unit")
+        if records[cid]["status"] == "untaught":
+            raise IntegrityError(
+                f"plan header re-teach: {cid!r} has not been taught yet — "
+                "its unit teaches it; re-teach is for a concept taught "
+                "too thinly the first time")
 
     # the course must FIT: one session per concept, plus the case study,
     # plus the terminal synthesis session at the end
@@ -1363,8 +1382,13 @@ def dispatch(course: Path):
         o = owed[0]
         out["type"], out["unit"] = "catch-up", o["unit"]
         out["owed"], out["concept"] = o["kind"], o["concept"]
-        out["why"] = (f"unit {o['unit']['num']} ended with {o['concept']} "
-                      f"never taught — {len(owed)} such concept(s) in all")
+        if o["kind"] == "reteach":
+            out["why"] = (f"{o['concept']} is on the plan's re-teach list: "
+                          f"its full lesson — {len(owed)} catch-up(s) in all")
+        else:
+            out["why"] = (f"unit {o['unit']['num']} ended with "
+                          f"{o['concept']} never taught — {len(owed)} such "
+                          "concept(s) in all")
         return out
 
     here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
@@ -1646,8 +1670,9 @@ PRESENTED_SHOWN = 3
 def owed_items(course: Path):
     """Concepts a unit left untaught when its slots ran out — derived
     from state on every call, so it can never drift and vanishes the
-    moment the concept is taught. Each gets a catch-up session: an
-    ordinary lesson that consumes no plan slot.
+    moment the concept is taught — followed by the plan's `re-teach:`
+    list. Each gets a catch-up session: an ordinary lesson that consumes
+    no plan slot.
 
     A unit-end session that was never rubric-graded is NOT owed. It used
     to be: the live course spent a month of sittings (2026-10/11) on
@@ -1658,14 +1683,44 @@ def owed_items(course: Path):
     _, records = load_state(course)
     idx = session_index(header)
     ended = [u for u in units if u.get("num") is not None and u["end"] < idx]
-    return [{"kind": "teach", "concept": c, "unit": u}
+    owed = [{"kind": "teach", "concept": c, "unit": u}
             for u in ended for c in u["concepts"]
             if records.get(c, {}).get("status") == "untaught"]
+    # a re-teach lesson is a detour, so it runs between units and never
+    # in the middle of one: the unit under way keeps its thread
+    here = next((u for u in units if u["start"] <= idx <= u["end"]), None)
+    mid_unit = (here is not None and here.get("num") is not None
+                and idx > here["start"])
+    if not mid_unit:
+        for c in reteach_list(header):
+            u = unit_of_concept(units, c)
+            if u and records.get(c, {}).get("status") != "untaught":
+                owed.append({"kind": "reteach", "concept": c, "unit": u})
+    return owed
 
 
 def _log_date(path: Path, course: Path) -> str:
     m = re.match(r"(\d{4}-\d\d-\d\d)-", Path(path).name)
     return m.group(1) if m else _today(course).isoformat()
+
+
+def _settle_reteach(course: Path, text: str):
+    """A re-teach lesson that ended with its concept graded is done:
+    take it off the plan's list. An unfinished one has no grade yet and
+    stays, so the next sitting resumes it."""
+    header = parse_plan(course)[0]
+    listed = reteach_list(header)
+    taught = [c for c in _brief_comment(text).get("teach", "-").split(",")
+              if c in listed]
+    if not taught:
+        return
+    try:
+        graded = {g["id"] for g in parse_log_grades(text)[1]}
+    except (FormatError, IntegrityError):
+        return
+    left = [c for c in listed if not (c in taught and c in graded)]
+    if left != listed:
+        write_plan_header(course, {RETEACH_FIELD: ", ".join(left) or "-"})
 
 
 def _post_commit(course: Path, text: str):
@@ -1675,6 +1730,7 @@ def _post_commit(course: Path, text: str):
     brief = _brief_comment(text)
     _tick_owed(course, [x for x in brief.get("owed", "-").split(",")
                         if x != "-"], text)
+    _settle_reteach(course, text)
     header, units = parse_plan(course)
     idx = session_index(header)
     _, records = load_state(course)
@@ -2023,6 +2079,8 @@ def _next_lesson_title(course: Path, d: dict, target):
     u = d.get("unit")
     if not target or not u or d["type"] not in ("standard", "catch-up"):
         return None
+    if d.get("owed") == "reteach":
+        return None           # what follows is another unit's business
     _, records = load_state(course)
     left = [c for c in u["concepts"]
             if records[c]["status"] == "untaught" and c != target]
@@ -2303,6 +2361,13 @@ def cmd_begin(course: Path):
         if target and not backs:
             dfn = parse_map(course).get(target, {}).get("def", "")
             lines.append(f"teach: {target}" + (f" — {dfn}" if dfn else ""))
+            if d.get("owed") == "reteach":
+                lines.append(
+                    f"re-teach: {target} was taught before, too thinly. "
+                    "This is its full lesson: teach the lesson file from "
+                    "its start as if new, let them say what they remember "
+                    "where it helps, and grade it `taught` when the last "
+                    "section is done.")
             # a picture left for the tutor to spot inside the asset text
             # went unsent (session 34r, 2026-10-25) — name it outright
             unit_path = Path(course) / f"assets/unit-{u['num']:02d}.md"
@@ -2567,6 +2632,7 @@ def cmd_close(course: Path, logfile: Path, _resume=False):
     if applied == "applied" or _resume:
         _tick_owed(course, [x for x in brief.get("owed", "-").split(",")
                             if x != "-"], text)
+        _settle_reteach(course, text)
     header, units = parse_plan(course)
     idx = session_index(header)
     today = _today(course)
