@@ -53,7 +53,7 @@
 > **Concept:** <id> · Unit N: <the unit's question>
 > **Builds on:** <earlier lessons this one stands on, in plain words>
 > **Goal:** <what the learner can do after this, in one line>
-> **Figures as of:** <month year>. Refresh anything dated before teaching.
+> **Figures as of:** <month year>. The tutor teaches them with this date and does not look them up; update the file itself when they go stale.
 
 ## Why this matters
 

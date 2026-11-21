@@ -187,8 +187,9 @@ Then work, in order:
    stronger model than the agent that will teach session 23 on a
    Tuesday. Compile once, execute many: the more judgment you pre-bake
    into assets, the less the runtime tutor improvises. Date every
-   perishable figure ("as of <month year>") — the tutor's job at teach
-   time is to REFRESH numbers, never to redesign concepts. (Authoring
+   perishable figure ("as of <month year>") — the tutor teaches the
+   figure with its date; it neither refreshes numbers nor redesigns
+   concepts. Stale figures are fixed in the files, between sessions. (Authoring
    only units 1–2 and leaving the rest to `author-after-close` is the
    fallback for when bootstrap time is genuinely short — accept that
    those assets will be written by whatever model happens to be

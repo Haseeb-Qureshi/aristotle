@@ -25,8 +25,8 @@
      Quiz items are SINGLE-USE for the whole course (the asked ledger
      tracks them) — author enough per concept, and expect later probes
      to be freshly built cases anyway. Date every perishable figure
-     inline ("as of <month year>") so the runtime tutor knows what to
-     refresh and the learner hears figures with their vintage.
+     inline ("as of <month year>") so the learner hears figures with
+     their vintage. The runtime tutor does not look figures up.
 
      If an item's KEY demands case facts (names, numbers, events) that
      its own stem does not supply, append `| requires: <those facts>`.
